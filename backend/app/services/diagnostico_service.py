@@ -1,7 +1,4 @@
-"""
-Servicio de diagnóstico — permite al psicólogo guardar la conclusión
-clínica y exportar el informe en PDF usando ReportLab.
-"""
+
 from datetime import datetime
 from io import BytesIO
 from sqlalchemy.orm import Session

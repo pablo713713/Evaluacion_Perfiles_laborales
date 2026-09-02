@@ -1,12 +1,6 @@
-"""
-Módulo NLP — Motor de análisis lingüístico con spaCy
-Aplica tokenización, lematización, POS tagging y análisis de dependencias
-para extraer indicadores conductuales del texto libre del candidato.
-"""
 import spacy
 from app.nlp.lexico_nlp import LEXICO_VERBAL, FACTOR_NEGACION, MIN_PALABRAS, LEMAS_AMBIGUOS
 
-# Cargar modelo español al iniciar (se hace una sola vez)
 nlp = spacy.load("es_core_news_md")
 
 
@@ -67,21 +61,14 @@ def analizar_texto(texto: str) -> dict:
     rastros = []
 
     for token in doc:
-        # Analizar verbos, sustantivos y adjetivos con significado conductual
         lema = token.lemma_.lower()
         entrada = LEXICO_VERBAL.get(lema)
 
         if not entrada:
             continue
-
-        # Filtro de ambigüedad: palabras como "jefe" o "paciente" solo
-        # puntúan si el candidato las usa para describirse a sí mismo
-        # (como sujeto o atributo del sujeto), no como mención incidental
-        # de un tercero (ej. "mi jefe me llamó" no debe puntuar).
         if lema in LEMAS_AMBIGUOS and token.dep_ not in ("nsubj", "attr", "ROOT"):
             continue
 
-        # Detectar negación: buscar dependiente con dep_ == "neg"
         tiene_negacion = any(
             child.dep_ == "neg" for child in token.children
         )
@@ -90,7 +77,6 @@ def analizar_texto(texto: str) -> dict:
         peso_final = peso_base * FACTOR_NEGACION if tiene_negacion else peso_base
         perfil = entrada["perfil"]
 
-        # Si hay negación en un perfil, el peso negativo resta de ese perfil
         puntajes[perfil] = round(puntajes[perfil] + peso_final, 4)
 
         rastros.append({

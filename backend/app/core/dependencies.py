@@ -23,7 +23,6 @@ def require_rol(rol_nombre: str):
         return current_user
     return checker
  
-# Shortcuts
 require_admin    = require_rol("Administrador")
 require_psicologo = require_rol("Psicologo")
 require_candidato = require_rol("Candidato")

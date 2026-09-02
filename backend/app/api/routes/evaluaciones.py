@@ -41,14 +41,12 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
         .first()
     )
 
-    # Si ya tiene una evaluación completada o inconclusa, no se generan más
     if ev and ev.estado in ("completada", "inconclusa_evasion"):
         return {"id_evaluacion": ev.id_evaluacion, "estado": "completada"}
 
     if ev and ev.estado == "invalida":
         return {"id_evaluacion": ev.id_evaluacion, "estado": "sesion_expirada"}
 
-    # Sin evaluación activa: crear una nueva automáticamente
     if not ev or ev.estado not in ("pendiente", "en_curso"):
         # Asignamos como supervisor al primer Psicólogo activo del sistema
         from app.models.usuario import Usuario
@@ -64,7 +62,6 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
 
         ev = crear_evaluacion(db, candidato.id_usuario, psicologo_default.id_usuario)
 
-    # Determinar la pregunta actual a mostrar
     grafo = construir_grafo(db)
 
     if not ev.respuestas:
@@ -73,7 +70,6 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
         if not nodo_id:
             raise HTTPException(status_code=500, detail="No hay pregunta raíz configurada")
     else:
-        # Retoma desde el último nodo que respondió (por si recargó la página)
         ultima_respuesta = max(ev.respuestas, key=lambda r: r.fecha_hora)
         nodo_id = ultima_respuesta.id_nodo
         if nodo_id not in grafo.nodes:
@@ -91,7 +87,6 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
 @router.post("/{id_evaluacion}/responder")
 def responder(id_evaluacion: int, body: RespuestaBody,
               db: Session = Depends(get_db), candidato=Depends(require_candidato)):
-    # Verificar que la evaluación pertenece al candidato autenticado
     ev = db.query(Evaluacion).filter(Evaluacion.id_evaluacion == id_evaluacion).first()
     if not ev:
         raise HTTPException(status_code=404, detail="Evaluación no encontrada")

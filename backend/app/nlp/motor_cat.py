@@ -74,12 +74,9 @@ def seleccionar_siguiente_nodo(
     if not candidatos:
         return None
  
-    # Calcular perfil predominante y segundo perfil
     perfiles_ordenados = sorted(puntajes_acumulados.items(), key=lambda x: x[1], reverse=True)
     perfil_top = perfiles_ordenados[0][0] if perfiles_ordenados else "Dominante"
  
-    # Seleccionar el nodo que mejor discrimina al perfil top actual
-    # Criterio: mayor peso en el perfil que aún no está definido (maximizar información)
     def puntaje_informativo(node_id: int) -> float:
         data = grafo.nodes[node_id]
         pesos = {
@@ -87,7 +84,6 @@ def seleccionar_siguiente_nodo(
             "Hibrido":   data.get("peso_hibrido",   0.34),
             "Sumiso":    data.get("peso_sumiso",     0.33),
         }
-        # Preferir nodos que apunten al perfil con menor certeza actual
         perfil_incierto = perfiles_ordenados[-1][0] if len(perfiles_ordenados) > 1 else "Hibrido"
         return pesos.get(perfil_incierto, 0.0)
  

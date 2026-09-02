@@ -55,7 +55,6 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
     """
     evaluacion = db.query(Evaluacion).filter(Evaluacion.id_evaluacion == id_evaluacion).first()
 
-    # Verificar expiración de sesión (RN-03)
     if evaluacion.fecha_expiracion_token and datetime.utcnow() > evaluacion.fecha_expiracion_token:
         evaluacion.estado = "invalida"
         db.commit()
@@ -63,11 +62,9 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
 
     resultado_nlp = analizar_texto(texto)
 
-    # Respuesta muy corta — pedir al candidato que elabore más
     if not resultado_nlp["es_valida"]:
         return {"estado": "respuesta_corta", "min_palabras": settings.MIN_PALABRAS_RESPUESTA}
 
-    # Guardar respuesta
     respuesta = RespuestaCandicato(
         id_evaluacion=id_evaluacion,
         id_nodo=id_nodo,
@@ -77,7 +74,7 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
         es_valida=resultado_nlp["es_valida"],
     )
     db.add(respuesta)
-    db.flush()  # Para obtener id_respuesta antes de insertar los rastros
+    db.flush()  
 
     # Guardar rastro de auditoría NLP
     for rastro in resultado_nlp["rastros"]:
@@ -95,7 +92,6 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
     puntajes_acumulados = _calcular_puntajes_acumulados(db, id_evaluacion)
     probabilidades = calcular_probabilidades(puntajes_acumulados)
 
-    # Cantidad de respuestas válidas hasta el momento
     cantidad_respuestas_validas = db.query(RespuestaCandicato).filter(
         RespuestaCandicato.id_evaluacion == id_evaluacion,
         RespuestaCandicato.es_valida == True,
@@ -125,7 +121,6 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
     siguiente = seleccionar_siguiente_nodo(grafo, id_nodo, puntajes_acumulados, nodos_visitados)
 
     if not siguiente:
-        # Sin más nodos disponibles en el grafo
         perfil_max = max(probabilidades, key=probabilidades.get)
         evaluacion.estado = "completada"
         evaluacion.perfil_predominante = perfil_max
@@ -148,7 +143,6 @@ def procesar_respuesta(db: Session, id_evaluacion: int, id_nodo: int, texto: str
     espectro_lider = max(probabilidades, key=probabilidades.get) if probabilidades else "Indefinido"
     puntaje_lider = probabilidades.get(espectro_lider, 0.0)
 
-    # Extraer las palabras clave identificadas en el rastro NLP
     tokens_detectados = [
         rastro.get("palabra_clave") or rastro.get("token") or rastro.get("palabra") or str(rastro)
         for rastro in resultado_nlp.get("rastros", [])
@@ -191,7 +185,6 @@ def _incrementar_contador_evasion(db: Session, evaluacion: Evaluacion):
         RespuestaCandicato.id_evaluacion == evaluacion.id_evaluacion,
         RespuestaCandicato.es_valida == True,
     ).all()
-    # Si más del 60% de respuestas válidas no generaron rastro = evasión sistemática
     sin_rastro = [r for r in respuestas_evasivas if not r.rastros]
     if len(respuestas_evasivas) >= 3 and len(sin_rastro) / len(respuestas_evasivas) > 0.6:
         evaluacion.estado = "inconclusa_evasion"
