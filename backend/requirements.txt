@@ -1,0 +1,33 @@
+# Framework principal
+fastapi==0.110.3
+uvicorn[standard]==0.29.0
+
+# Base de datos
+sqlalchemy==2.0.30
+alembic==1.13.1
+psycopg2-binary==2.9.9
+
+# Autenticación
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+python-multipart==0.0.9
+
+# NLP
+spacy==3.7.4
+# Modelo español (instalar con: python -m spacy download es_core_news_md)
+
+# Grafo adaptativo
+networkx==3.3
+
+# Variables de entorno
+python-dotenv==1.0.1
+
+# Validación
+pydantic==2.7.1
+pydantic-settings==2.2.1
+
+# Generación de PDF (diagnóstico)
+reportlab==4.2.0
+
+# Utilidades
+uuid==1.30
