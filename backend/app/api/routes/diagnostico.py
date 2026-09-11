@@ -2,9 +2,9 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from app.db.database import get_db
-from app.core.dependencies import require_psicologo
-from app.services.diagnostico_service import guardar_conclusion, generar_pdf
+from app.infraestructure.db.database import get_db
+from app.infraestructure.security.dependencies import require_psicologo
+from app.application.diagnostico_service import guardar_conclusion, generar_pdf
  
 router = APIRouter(prefix="/api/diagnostico", tags=["Diagnóstico"])
  

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from app.db.database import get_db
-from app.core.dependencies import require_psicologo
-from app.models.nodo_pregunta import NodoPregunta
+from app.infraestructure.db.database import get_db
+from app.infraestructure.security.dependencies import require_psicologo
+from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 
 router = APIRouter(prefix="/api/preguntas", tags=["Banco de Preguntas"])
 

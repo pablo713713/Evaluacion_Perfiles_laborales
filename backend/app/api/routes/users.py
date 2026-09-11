@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from app.db.database import get_db
-from app.core.dependencies import require_admin
-from app.core.security import hash_password
-from app.models.usuario import Usuario
+from app.infraestructure.db.database import get_db
+from app.infraestructure.security.dependencies import require_admin
+from app.infraestructure.security.security import hash_password
+from app.infraestructure.db.models.usuario import Usuario
  
 router = APIRouter(prefix="/api/usuarios", tags=["Usuarios"])
  
@@ -57,5 +57,5 @@ def eliminar(id_usuario: int, db: Session = Depends(get_db), _=Depends(require_a
 
 @router.get("/roles")
 def listar_roles(db: Session = Depends(get_db), _=Depends(require_admin)):
-    from app.models.rol import Rol
+    from app.infraestructure.db.models.rol import Rol
     return db.query(Rol).all()
