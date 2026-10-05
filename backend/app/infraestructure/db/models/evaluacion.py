@@ -17,6 +17,8 @@ class Evaluacion(Base):
     fecha_expiracion_token = Column(DateTime, nullable=True)
     conclusion_clinica     = Column(Text, nullable=True)
     fecha_diagnostico      = Column(DateTime, nullable=True)
+    texto_diagnostico      = Column(Text, nullable=True)
+    espectro_confirmado    = Column(String(20), nullable=True)
     candidato   = relationship("Usuario", foreign_keys=[id_usuario_candidato], back_populates="evaluaciones_como_candidato")
     psicologo   = relationship("Usuario", foreign_keys=[id_usuario_psicologo], back_populates="evaluaciones_como_psicologo")
     respuestas  = relationship("RespuestaCandicato", back_populates="evaluacion", cascade="all, delete-orphan")

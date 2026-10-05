@@ -1,25 +1,40 @@
 import { useState, useEffect } from 'react'
 import api from '../services/api'
-import { validarUsuario } from '../utils/validators'
 
 function AdminPage() {
-  const [usuarios, setUsuarios] = useState([])
-  const [roles, setRoles] = useState([])
-  const [cargando, setCargando] = useState(true)
-  const [errores, setErrores] = useState([])
+  const [usuarios, setUsuarios]           = useState([])
+  const [cargando, setCargando]           = useState(true)
+  const [errores, setErrores]             = useState([])
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [form, setForm] = useState({
-    nombre_completo: '',
-    correo: '',
-    password: '',
-    id_rol: '',
+    nombres:           '',
+    apellido_paterno:  '',
+    apellido_materno:  '',
+    correo:            '',
+    id_rol:            '',
   })
-  const [guardando, setGuardando] = useState(false)
-  const [mensajeExito, setMensajeExito] = useState('')
+  const [guardando, setGuardando]         = useState(false)
+  const [mensajeExito, setMensajeExito]   = useState('')
+  const [passwordGenerada, setPasswordGenerada] = useState('')
+  const [enviandoCorreo, setEnviandoCorreo] = useState({})
+
+  const reenviarCredenciales = async (id, correo) => {
+    setEnviandoCorreo(prev => ({ ...prev, [id]: true }))
+    setErrores([])
+    try {
+      const res = await api.post(`/api/usuarios/${id}/reenviar-credenciales`)
+      setMensajeExito(`Nueva contraseña enviada a ${correo}.`)
+      if (res.data._dev_password) setPasswordGenerada(res.data._dev_password)
+      setTimeout(() => { setMensajeExito(''); setPasswordGenerada('') }, 10000)
+    } catch {
+      setErrores(['Error al reenviar las credenciales.'])
+    } finally {
+      setEnviandoCorreo(prev => ({ ...prev, [id]: false }))
+    }
+  }
 
   useEffect(() => {
     cargarUsuarios()
-    cargarRoles()
   }, [])
 
   const cargarUsuarios = async () => {
@@ -33,37 +48,48 @@ function AdminPage() {
     }
   }
 
-  const cargarRoles = async () => {
-    try {
-      const res = await api.get('/api/usuarios/roles')
-      setRoles(res.data)
-    } catch {
-      console.error('Error cargando roles')
-    }
+  const resetForm = () => {
+    setForm({ nombres: '', apellido_paterno: '', apellido_materno: '', correo: '', id_rol: '' })
+    setPasswordGenerada('')
+    setErrores([])
+  }
+
+  const validar = () => {
+    const errs = []
+    if (!form.nombres.trim())          errs.push('El nombre es obligatorio.')
+    if (!form.apellido_paterno.trim()) errs.push('El apellido paterno es obligatorio.')
+    if (!form.apellido_materno.trim()) errs.push('El apellido materno es obligatorio.')
+    if (!form.correo.trim())           errs.push('El correo es obligatorio.')
+    if (!form.id_rol)                  errs.push('Seleccione un rol.')
+    return errs
   }
 
   const crearUsuario = async () => {
     setErrores([])
-    
-    const erroresValidacion = validarUsuario(form)
-    if (erroresValidacion) {
-      setErrores(erroresValidacion)
-      return
-    }
+    setPasswordGenerada('')
+    const errs = validar()
+    if (errs.length > 0) { setErrores(errs); return }
 
     setGuardando(true)
     try {
-      await api.post('/api/usuarios/', {
-        nombre_completo: form.nombre_completo.trim(),
-        correo: form.correo.trim(),
-        password: form.password,
-        id_rol: parseInt(form.id_rol),
+      const res = await api.post('/api/usuarios/', {
+        nombres:          form.nombres.trim(),
+        apellido_paterno: form.apellido_paterno.trim(),
+        apellido_materno: form.apellido_materno.trim(),
+        correo:           form.correo.trim(),
+        id_rol:           parseInt(form.id_rol),
       })
-      setMensajeExito('Usuario creado correctamente.')
-      setForm({ nombre_completo: '', correo: '', password: '', id_rol: '' })
+
+      // Mostrar la contraseña generada (solo en desarrollo)
+      if (res.data._dev_password) {
+        setPasswordGenerada(res.data._dev_password)
+      }
+
+      setMensajeExito(res.data.mensaje || 'Usuario creado correctamente.')
+      resetForm()
       setMostrarFormulario(false)
       cargarUsuarios()
-      setTimeout(() => setMensajeExito(''), 3000)
+      setTimeout(() => { setMensajeExito(''); setPasswordGenerada('') }, 10000)
     } catch (err) {
       setErrores([err.response?.data?.detail || 'Error al crear usuario.'])
     } finally {
@@ -91,12 +117,13 @@ function AdminPage() {
 
   const colorRol = (rol) => {
     if (rol === 'Administrador') return 'bg-gray-100 text-gray-700'
-    if (rol === 'Psicologo') return 'bg-blue-50 text-blue-700'
+    if (rol === 'Psicologo')     return 'bg-blue-50 text-blue-700'
     return 'bg-green-50 text-green-700'
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Header */}
       <div className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-medium text-gray-800">Panel de Administración</h1>
@@ -111,47 +138,69 @@ function AdminPage() {
       </div>
 
       <div className="max-w-4xl mx-auto px-8 py-10">
+
+        {/* Mensaje de éxito */}
         {mensajeExito && (
-          <div className="mb-6 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">
+          <div className="mb-4 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">
             {mensajeExito}
           </div>
         )}
-        
-        {/* Renderizado de errores con salto de línea */}
-        {errores.length > 0 && (
-          <div className="mb-6 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600 space-y-1">
-            {errores.map((err, idx) => (
-              <div key={idx}>{err}</div>
-            ))}
+
+        {/* Contraseña generada — solo desarrollo */}
+        {passwordGenerada && (
+          <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
+            <span className="font-medium">Contraseña generada (solo visible en desarrollo): </span>
+            <span className="font-mono font-bold text-blue-900">{passwordGenerada}</span>
+            <span className="block text-xs text-blue-500 mt-1">
+              Esta información también fue enviada al correo del usuario.
+            </span>
           </div>
         )}
 
+        {/* Errores */}
+        {errores.length > 0 && (
+          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600 space-y-1">
+            {errores.map((e, i) => <div key={i}>{e}</div>)}
+          </div>
+        )}
+
+        {/* Acciones */}
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-sm font-medium text-gray-600 uppercase tracking-widest">
             Usuarios ({usuarios.length})
           </h2>
           <button
-            onClick={() => { setMostrarFormulario(!mostrarFormulario); setErrores([]) }}
+            onClick={() => {
+              setMostrarFormulario(!mostrarFormulario)
+              resetForm()
+            }}
             className="px-4 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
           >
             {mostrarFormulario ? 'Cancelar' : '+ Nuevo usuario'}
           </button>
         </div>
 
+        {/* Formulario */}
         {mostrarFormulario && (
           <div className="bg-white border border-gray-100 rounded-xl p-6 mb-6">
-            <h3 className="text-sm font-medium text-gray-700 mb-4">Crear nuevo usuario</h3>
+            <h3 className="text-sm font-medium text-gray-700 mb-1">Crear nuevo usuario</h3>
+            <p className="text-xs text-gray-400 mb-4">
+              La contraseña se genera automáticamente y se envía al correo del usuario.
+            </p>
             <div className="grid grid-cols-2 gap-4">
+
+              {/* Nombres */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Nombre completo</label>
+                <label className="block text-xs text-gray-500 mb-1">Nombres</label>
                 <input
                   type="text"
-                  placeholder="Ej. Juan Pérez"
-                  value={form.nombre_completo}
-                  onChange={(e) => setForm({ ...form, nombre_completo: e.target.value })}
+                  value={form.nombres}
+                  onChange={(e) => setForm({ ...form, nombres: e.target.value })}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
                 />
               </div>
+
+              {/* Correo */}
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Correo electrónico</label>
                 <input
@@ -162,16 +211,30 @@ function AdminPage() {
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
                 />
               </div>
+
+              {/* Apellido paterno */}
               <div>
-                <label className="block text-xs text-gray-500 mb-1">Contraseña</label>
+                <label className="block text-xs text-gray-500 mb-1">Apellido paterno</label>
                 <input
-                  type="password"
-                  placeholder="Mínimo 8 caracteres"
-                  value={form.password}
-                  onChange={(e) => setForm({ ...form, password: e.target.value })}
+                  type="text"
+                  value={form.apellido_paterno}
+                  onChange={(e) => setForm({ ...form, apellido_paterno: e.target.value })}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
                 />
               </div>
+
+              {/* Apellido materno — fila completa */}
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Apellido materno</label>
+                <input
+                  type="text"
+                  value={form.apellido_materno}
+                  onChange={(e) => setForm({ ...form, apellido_materno: e.target.value })}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                />
+              </div>
+
+              {/* Rol */}
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Rol</label>
                 <select
@@ -185,19 +248,37 @@ function AdminPage() {
                   <option value="3">Candidato</option>
                 </select>
               </div>
+
+              
+
             </div>
+
+            {/* Vista previa de la contraseña */}
+            {form.nombres.trim() && form.apellido_paterno.trim() && (
+              <div className="mt-3 px-3 py-2 bg-gray-50 rounded-lg text-xs text-gray-500">
+                Contraseña que se generará:&nbsp;
+                <span className="font-mono font-medium text-gray-700">
+                  {form.nombres.trim()[0].toLowerCase()}
+                  {form.apellido_paterno.trim().toLowerCase().replace(/[^a-záéíóúüñ]/gi, '')}
+                  <span className="text-gray-400">XXXX</span>
+                </span>
+                &nbsp;(los 4 dígitos son aleatorios)
+              </div>
+            )}
+
             <div className="mt-4 flex justify-end">
               <button
                 onClick={crearUsuario}
                 disabled={guardando}
                 className="px-6 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:bg-gray-300 transition-colors"
               >
-                {guardando ? 'Guardando...' : 'Crear usuario'}
+                {guardando ? 'Creando usuario...' : 'Crear usuario'}
               </button>
             </div>
           </div>
         )}
 
+        {/* Tabla de usuarios */}
         <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
           {cargando ? (
             <div className="px-6 py-8 text-center text-sm text-gray-400">Cargando usuarios...</div>
@@ -230,14 +311,23 @@ function AdminPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      {u.estado_cuenta === 'activo' && (
+                      <div className="flex gap-2 justify-end">
                         <button
-                          onClick={() => desactivarUsuario(u.id_usuario)}
-                          className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                          onClick={() => reenviarCredenciales(u.id_usuario, u.correo)}
+                          disabled={enviandoCorreo[u.id_usuario]}
+                          className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
                         >
-                          Desactivar
+                          {enviandoCorreo[u.id_usuario] ? 'Enviando...' : 'Enviar contraseña'}
                         </button>
-                      )}
+                        {u.estado_cuenta === 'activo' && (
+                          <button
+                            onClick={() => desactivarUsuario(u.id_usuario)}
+                            className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                          >
+                            Desactivar
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
