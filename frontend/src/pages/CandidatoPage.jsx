@@ -9,17 +9,36 @@ function CandidatoPage() {
   const [respuesta, setRespuesta] = useState('')
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
-  const [estado, setEstado] = useState('cargando') // cargando | activo | completado | expirado
-  
-  // Estado para capturar la métrica psicométrica del backend
+  const [estado, setEstado] = useState('cargando')
   const [metricas, setMetricas] = useState(null)
 
   const idEvaluacion = useRef(null)
   const tiempoInicio = useRef(Date.now())
+  const intervaloRef = useRef(null)
 
   useEffect(() => {
     cargarMiEvaluacion()
+    return () => {
+      if (intervaloRef.current) clearInterval(intervaloRef.current)
+    }
   }, [])
+
+  // Iniciar intervalo SOLO cuando el estado es completado
+  useEffect(() => {
+    if (estado === 'completado') {
+      intervaloRef.current = setInterval(() => {
+        verificarEstado()
+      }, 15000)
+    } else {
+      if (intervaloRef.current) {
+        clearInterval(intervaloRef.current)
+        intervaloRef.current = null
+      }
+    }
+    return () => {
+      if (intervaloRef.current) clearInterval(intervaloRef.current)
+    }
+  }, [estado])
 
   const cerrarSesion = () => {
     localStorage.removeItem('token')
@@ -36,7 +55,6 @@ function CandidatoPage() {
         setEstado('completado')
         return
       }
-
       if (data.estado === 'sesion_expirada') {
         setEstado('expirado')
         return
@@ -44,13 +62,37 @@ function CandidatoPage() {
 
       idEvaluacion.current = data.id_evaluacion
       setPreguntaActual(data.pregunta_actual)
-      if (data.metricas_auditoria) {
-        setMetricas(data.metricas_auditoria)
-      }
+      if (data.metricas_auditoria) setMetricas(data.metricas_auditoria)
       setEstado('activo')
     } catch {
       setEstado('error')
     }
+  }
+
+  // Verifica silenciosamente si el estado cambió — usado en la pantalla de completado
+  const verificarEstado = async () => {
+    try {
+      const res = await api.get('/api/evaluaciones/mi-evaluacion')
+      const data = res.data
+      // Si el psicólogo habilitó repetición, el estado vuelve a "continuar"
+      if (data.estado === 'continuar') {
+        if (intervaloRef.current) clearInterval(intervaloRef.current)
+        idEvaluacion.current = data.id_evaluacion
+        setPreguntaActual(data.pregunta_actual)
+        setMetricas(null)
+        setNumeroPregunta(1)
+        setRespuesta('')
+        tiempoInicio.current = Date.now()
+        setEstado('activo')
+      }
+    } catch {
+      // Silencioso — no interrumpir la pantalla de completado
+    }
+  }
+
+  const verificarManualmente = async () => {
+    setEstado('cargando')
+    await cargarMiEvaluacion()
   }
 
   const enviarRespuesta = async () => {
@@ -74,23 +116,17 @@ function CandidatoPage() {
         setEnviando(false)
         return
       }
-
       if (resultado.estado === 'sesion_expirada') {
         setEstado('expirado')
         return
       }
-
       if (resultado.estado === 'completada') {
         setEstado('completado')
         return
       }
 
-      // Guardar métricas devueltas por el motor de inferencia
-      if (resultado.metricas_auditoria) {
-        setMetricas(resultado.metricas_auditoria)
-      }
+      if (resultado.metricas_auditoria) setMetricas(resultado.metricas_auditoria)
 
-      // Continuar a la siguiente pregunta
       setPreguntaActual(resultado.siguiente_nodo)
       setNumeroPregunta((n) => n + 1)
       setRespuesta('')
@@ -103,7 +139,8 @@ function CandidatoPage() {
     }
   }
 
-  // Pantallas de estado
+  // ── Pantallas de estado ──────────────────────────────────────────────────
+
   if (estado === 'cargando') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-white">
@@ -122,8 +159,40 @@ function CandidatoPage() {
             </svg>
           </div>
           <h2 className="text-xl font-light text-gray-800 mb-3">Evaluación completada</h2>
-          <p className="text-gray-500 text-sm leading-relaxed mb-8">
+          <p className="text-gray-500 text-sm leading-relaxed mb-6">
             Sus respuestas han sido registradas exitosamente.
+            El equipo de Recursos Humanos se pondrá en contacto con usted.
+          </p>
+          <p className="text-xs text-gray-400 mb-6">
+            Si fue habilitado para repetir la evaluación, haga clic en el botón de abajo.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={verificarManualmente}
+              className="px-6 py-2.5 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+            >
+              Verificar si puedo repetir
+            </button>
+            <button
+              onClick={cerrarSesion}
+              className="px-6 py-2.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Cerrar sesión
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (estado === 'expirado') {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-white">
+        <div className="max-w-md text-center px-8">
+          <h2 className="text-xl font-light text-gray-800 mb-3">Sesión expirada</h2>
+          <p className="text-gray-500 text-sm leading-relaxed mb-8">
+            El tiempo disponible para completar la evaluación ha expirado.
+            Por favor contacte al departamento de Recursos Humanos.
           </p>
           <button
             onClick={cerrarSesion}
@@ -136,11 +205,12 @@ function CandidatoPage() {
     )
   }
 
+  // ── Pantalla activa ──────────────────────────────────────────────────────
+
   return (
     <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
       <div className="w-full max-w-2xl bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
 
-        {/* Pregunta */}
         {preguntaActual && (
           <PreguntaView
             numero={numeroPregunta}
@@ -148,7 +218,6 @@ function CandidatoPage() {
           />
         )}
 
-        {/* Input de Respuesta */}
         <RespuestaInput
           value={respuesta}
           onChange={setRespuesta}
@@ -157,9 +226,7 @@ function CandidatoPage() {
           error={error}
         />
 
-        {/* ========================================================= */}
-        {/* PANEL DE PRUEBAS / VALIDACIÓN DE MOTOR PSICOMÉTRICO */}
-        {/* ========================================================= */}
+        {/* Panel de pruebas del motor psicométrico */}
         <div className="mt-10 border-t border-dashed border-gray-300 pt-6">
           <div className="flex items-center justify-between mb-4">
             <span className="text-xs font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">
@@ -184,8 +251,6 @@ function CandidatoPage() {
                   </p>
                 </div>
               </div>
-
-              {/* Barra visual de proximidad al umbral */}
               <div>
                 <div className="flex justify-between text-[11px] text-gray-400 mb-1">
                   <span>Progresión hacia finalización por convergencia</span>
@@ -208,8 +273,6 @@ function CandidatoPage() {
                   />
                 </div>
               </div>
-
-              {/* Palabras o tokens detectados */}
               <div>
                 <p className="text-gray-400 mb-1">Palabras clave/Tokens extraídos:</p>
                 {metricas.palabras_clave_detectadas?.length > 0 ? (

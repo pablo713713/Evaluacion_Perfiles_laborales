@@ -1,7 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from app.infraestructure.db.database import Base
- 
+
 class RastroAuditoriaNLP(Base):
     __tablename__ = "rastro_auditoria_nlp"
     id_rastro                = Column(Integer, primary_key=True, index=True)
@@ -13,5 +13,7 @@ class RastroAuditoriaNLP(Base):
     perfil_asignado          = Column(String(20),  nullable=False)
     puntos_sumados           = Column(Float, default=0.0)
     tiene_negacion           = Column(Boolean, default=False)
+    # Columnas de corrección clínica manual
+    origen                   = Column(String(15), default="automatico")  # automatico | manual
+    editado_por_psicologo    = Column(Boolean, default=False)
     respuesta                = relationship("RespuestaCandicato", back_populates="rastros")
- 

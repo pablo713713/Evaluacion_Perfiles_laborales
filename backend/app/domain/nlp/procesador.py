@@ -9,7 +9,7 @@ nlp = spacy.load("es_core_news_md")
 
 # Adverbios de negación que spaCy no siempre etiqueta como dep_=="neg"
 # pero semánticamente niegan el verbo principal de la oración
-ADVERBIOS_NEGACION = {"nunca", "jamás", "tampoco", "ni"}
+ADVERBIOS_NEGACION = {"no", "nunca", "jamás", "tampoco", "ni"}
 
 
 def validar_longitud(texto: str) -> bool:
@@ -40,17 +40,22 @@ def detectar_evasion(doc, rastros: list) -> bool:
 
 def tiene_negacion_contextual(token, doc) -> bool:
     """
-    Detecta negación sobre un token considerando:
-    1. Dependencia sintáctica 'neg' directa (hijos del token)
-    2. Adverbios de negación en la misma oración como modificadores
+    Detecta negación sobre un token considerando tres casos:
+    1. dep_ == "neg" directo en hijos del token (forma canónica)
+    2. dep_ == "advmod" con lema negativo en hijos del token
+       (spaCy en español etiqueta "no" como advmod, no como neg)
+    3. Adverbios negativos en la oración con head apuntando al token
     """
-    # Negación sintáctica directa (dep_ == "neg" en hijos)
-    if any(child.dep_ == "neg" for child in token.children):
-        return True
+    for child in token.children:
+        # Caso 1: negación sintáctica estándar
+        if child.dep_ == "neg":
+            return True
+        # Caso 2: spaCy etiqueta "no" como advmod en español
+        if child.dep_ == "advmod" and child.lemma_.lower() in ADVERBIOS_NEGACION:
+            return True
 
-    # Negación por adverbios en la misma oración (ej: "nunca propongo")
-    sent_tokens = list(token.sent)
-    for t in sent_tokens:
+    # Caso 3: adverbio negativo en la oración con head == token
+    for t in token.sent:
         if t.lemma_.lower() in ADVERBIOS_NEGACION and t.head == token:
             return True
 
@@ -111,8 +116,8 @@ def analizar_texto(texto: str) -> dict:
             "tiene_negacion":           negacion,   # alias para compatibilidad
         })
 
-    # Normalizar puntajes negativos a 0
-    puntajes = {k: max(0.0, v) for k, v in puntajes.items()}
+    # No normalizar negativos aquí — calcular_probabilidades los maneja correctamente
+    # Los negativos son información válida de negaciones detectadas
 
     es_evasiva = detectar_evasion(doc, rastros)
 
