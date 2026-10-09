@@ -7,7 +7,7 @@ function AdminPage() {
   const [errores, setErrores]             = useState([])
   const [mostrarFormulario, setMostrarFormulario] = useState(false)
   const [form, setForm] = useState({
-    nombres:           '',
+    nombres:          '',
     apellido_paterno:  '',
     apellido_materno:  '',
     correo:            '',
@@ -17,6 +17,7 @@ function AdminPage() {
   const [mensajeExito, setMensajeExito]   = useState('')
   const [passwordGenerada, setPasswordGenerada] = useState('')
   const [enviandoCorreo, setEnviandoCorreo] = useState({})
+  const [roles, setRoles] = useState([])
 
   const reenviarCredenciales = async (id, correo) => {
     setEnviandoCorreo(prev => ({ ...prev, [id]: true }))
@@ -35,6 +36,7 @@ function AdminPage() {
 
   useEffect(() => {
     cargarUsuarios()
+    api.get('/api/usuarios/roles').then(r => setRoles(r.data)).catch(() => {})
   }, [])
 
   const cargarUsuarios = async () => {
@@ -116,22 +118,23 @@ function AdminPage() {
   }
 
   const colorRol = (rol) => {
-    if (rol === 'Administrador') return 'bg-gray-100 text-gray-700'
-    if (rol === 'Psicologo')     return 'bg-blue-50 text-blue-700'
-    return 'bg-green-50 text-green-700'
+    if (rol === 'Administrador')   return 'bg-[#0f3846]/10 text-[#0f3846]'
+    if (rol === 'Psicologo')       return 'bg-blue-50 text-blue-700'
+    if (rol === 'PsicologoLider')  return 'bg-purple-50 text-purple-700'
+    return 'bg-emerald-50 text-emerald-700'
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between">
+      {/* Header en Azul Petróleo */}
+      <div className="bg-[#0f3846] border-b border-[#0b2a35] px-8 py-4 flex items-center justify-between shadow-sm">
         <div>
-          <h1 className="text-lg font-medium text-gray-800">Panel de Administración</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Gestión de usuarios y roles</p>
+          <h1 className="text-lg font-medium text-white">Panel de Administración</h1>
+          <p className="text-xs text-cyan-100/70 mt-0.5">Gestión de usuarios y roles</p>
         </div>
         <button
           onClick={cerrarSesion}
-          className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+          className="text-sm text-gray-200 hover:text-[#fef08a] transition-colors"
         >
           Cerrar sesión
         </button>
@@ -141,17 +144,17 @@ function AdminPage() {
 
         {/* Mensaje de éxito */}
         {mensajeExito && (
-          <div className="mb-4 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">
+          <div className="mb-4 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm text-emerald-800">
             {mensajeExito}
           </div>
         )}
 
         {/* Contraseña generada — solo desarrollo */}
         {passwordGenerada && (
-          <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-700">
+          <div className="mb-4 px-4 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
             <span className="font-medium">Contraseña generada (solo visible en desarrollo): </span>
-            <span className="font-mono font-bold text-blue-900">{passwordGenerada}</span>
-            <span className="block text-xs text-blue-500 mt-1">
+            <span className="font-mono font-bold text-blue-950">{passwordGenerada}</span>
+            <span className="block text-xs text-blue-600 mt-1">
               Esta información también fue enviada al correo del usuario.
             </span>
           </div>
@@ -159,7 +162,7 @@ function AdminPage() {
 
         {/* Errores */}
         {errores.length > 0 && (
-          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600 space-y-1">
+          <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600 space-y-1">
             {errores.map((e, i) => <div key={i}>{e}</div>)}
           </div>
         )}
@@ -174,7 +177,7 @@ function AdminPage() {
               setMostrarFormulario(!mostrarFormulario)
               resetForm()
             }}
-            className="px-4 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+            className="px-4 py-2 bg-[#fef08a] text-[#0f3846] font-semibold text-sm rounded-lg hover:bg-[#fef9c3] transition-colors shadow-sm"
           >
             {mostrarFormulario ? 'Cancelar' : '+ Nuevo usuario'}
           </button>
@@ -182,8 +185,8 @@ function AdminPage() {
 
         {/* Formulario */}
         {mostrarFormulario && (
-          <div className="bg-white border border-gray-100 rounded-xl p-6 mb-6">
-            <h3 className="text-sm font-medium text-gray-700 mb-1">Crear nuevo usuario</h3>
+          <div className="bg-white border border-gray-200 rounded-xl p-6 mb-6 shadow-sm">
+            <h3 className="text-sm font-medium text-[#0f3846] mb-1">Crear nuevo usuario</h3>
             <p className="text-xs text-gray-400 mb-4">
               La contraseña se genera automáticamente y se envía al correo del usuario.
             </p>
@@ -194,9 +197,10 @@ function AdminPage() {
                 <label className="block text-xs text-gray-500 mb-1">Nombres</label>
                 <input
                   type="text"
+                  placeholder="Ej. Andres"
                   value={form.nombres}
                   onChange={(e) => setForm({ ...form, nombres: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0f3846]"
                 />
               </div>
 
@@ -208,7 +212,7 @@ function AdminPage() {
                   placeholder="ejemplo@correo.com"
                   value={form.correo}
                   onChange={(e) => setForm({ ...form, correo: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0f3846]"
                 />
               </div>
 
@@ -217,20 +221,10 @@ function AdminPage() {
                 <label className="block text-xs text-gray-500 mb-1">Apellido paterno</label>
                 <input
                   type="text"
+                  placeholder="Ej. Terrazas"
                   value={form.apellido_paterno}
                   onChange={(e) => setForm({ ...form, apellido_paterno: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
-                />
-              </div>
-
-              {/* Apellido materno — fila completa */}
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Apellido materno</label>
-                <input
-                  type="text"
-                  value={form.apellido_materno}
-                  onChange={(e) => setForm({ ...form, apellido_materno: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0f3846]"
                 />
               </div>
 
@@ -240,16 +234,26 @@ function AdminPage() {
                 <select
                   value={form.id_rol}
                   onChange={(e) => setForm({ ...form, id_rol: e.target.value })}
-                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0f3846]"
                 >
                   <option value="">Seleccionar rol</option>
-                  <option value="1">Administrador</option>
-                  <option value="2">Psicologo</option>
-                  <option value="3">Candidato</option>
+                  {roles.map(r => (
+                    <option key={r.id_rol} value={r.id_rol}>{r.nombre_rol}</option>
+                  ))}
                 </select>
               </div>
 
-              
+              {/* Apellido materno — fila completa */}
+              <div className="col-span-2">
+                <label className="block text-xs text-gray-500 mb-1">Apellido materno</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Candia"
+                  value={form.apellido_materno}
+                  onChange={(e) => setForm({ ...form, apellido_materno: e.target.value })}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#0f3846]"
+                />
+              </div>
 
             </div>
 
@@ -257,7 +261,7 @@ function AdminPage() {
             {form.nombres.trim() && form.apellido_paterno.trim() && (
               <div className="mt-3 px-3 py-2 bg-gray-50 rounded-lg text-xs text-gray-500">
                 Contraseña que se generará:&nbsp;
-                <span className="font-mono font-medium text-gray-700">
+                <span className="font-mono font-medium text-[#0f3846]">
                   {form.nombres.trim()[0].toLowerCase()}
                   {form.apellido_paterno.trim().toLowerCase().replace(/[^a-záéíóúüñ]/gi, '')}
                   <span className="text-gray-400">XXXX</span>
@@ -270,7 +274,7 @@ function AdminPage() {
               <button
                 onClick={crearUsuario}
                 disabled={guardando}
-                className="px-6 py-2 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:bg-gray-300 transition-colors"
+                className="px-6 py-2 bg-[#fef08a] text-[#0f3846] font-semibold text-sm rounded-lg hover:bg-[#fef9c3] disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
               >
                 {guardando ? 'Creando usuario...' : 'Crear usuario'}
               </button>
@@ -279,7 +283,7 @@ function AdminPage() {
         )}
 
         {/* Tabla de usuarios */}
-        <div className="bg-white border border-gray-100 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
           {cargando ? (
             <div className="px-6 py-8 text-center text-sm text-gray-400">Cargando usuarios...</div>
           ) : usuarios.length === 0 ? (
@@ -287,7 +291,7 @@ function AdminPage() {
           ) : (
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-50">
+                <tr className="border-b border-gray-100 bg-gray-50/50">
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Nombre</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Correo</th>
                   <th className="px-6 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider">Rol</th>
@@ -295,10 +299,10 @@ function AdminPage() {
                   <th className="px-6 py-3"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-gray-100">
                 {usuarios.map((u) => (
-                  <tr key={u.id_usuario} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 text-sm text-gray-800">{u.nombre_completo}</td>
+                  <tr key={u.id_usuario} className="hover:bg-gray-50/80 transition-colors">
+                    <td className="px-6 py-4 text-sm text-gray-800 font-medium">{u.nombre_completo}</td>
                     <td className="px-6 py-4 text-sm text-gray-500">{u.correo}</td>
                     <td className="px-6 py-4">
                       <span className={`px-2 py-1 rounded text-xs font-medium ${colorRol(u.rol?.nombre_rol)}`}>
@@ -306,23 +310,23 @@ function AdminPage() {
                       </span>
                     </td>
                     <td className="px-6 py-4">
-                      <span className={`text-xs ${u.estado_cuenta === 'activo' ? 'text-green-600' : 'text-gray-400'}`}>
+                      <span className={`text-xs ${u.estado_cuenta === 'activo' ? 'text-emerald-600 font-medium' : 'text-gray-400'}`}>
                         {u.estado_cuenta}
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <div className="flex gap-2 justify-end">
+                      <div className="flex gap-3 justify-end">
                         <button
                           onClick={() => reenviarCredenciales(u.id_usuario, u.correo)}
                           disabled={enviandoCorreo[u.id_usuario]}
-                          className="text-xs text-blue-400 hover:text-blue-600 disabled:opacity-40 transition-colors"
+                          className="text-xs text-[#0f3846] font-medium hover:underline disabled:opacity-40 transition-colors"
                         >
                           {enviandoCorreo[u.id_usuario] ? 'Enviando...' : 'Enviar contraseña'}
                         </button>
                         {u.estado_cuenta === 'activo' && (
                           <button
                             onClick={() => desactivarUsuario(u.id_usuario)}
-                            className="text-xs text-red-400 hover:text-red-600 transition-colors"
+                            className="text-xs text-red-500 hover:text-red-700 font-medium transition-colors"
                           >
                             Desactivar
                           </button>

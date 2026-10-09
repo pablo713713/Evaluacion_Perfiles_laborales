@@ -1,4 +1,9 @@
-
+"""
+Servicio de Evaluación — Capa de Aplicación
+Responsabilidad: orquestar el ciclo de evaluación.
+NO conoce SQLAlchemy directamente — delega al repositorio.
+NO conoce FastAPI — opera con Python puro.
+"""
 import uuid
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
@@ -14,25 +19,19 @@ from app.domain.nlp.motor_cat import (
     construir_grafo, obtener_nodo_raiz,
     seleccionar_siguiente_nodo, calcular_probabilidades, verificar_umbral,
 )
+from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 
-# Capa de infraestructura — acceso a datos
-from app.infraestructure.repositories.evaluacion_repo import (
-    obtener_evaluacion_por_id,
-    guardar_evaluacion,
-    guardar_respuesta,
-    guardar_rastros,
-    obtener_respuestas_validas,
-    contar_respuestas_validas,
-    commit,
-)
-from app.infraestructure.repositories.nodo_repo import obtener_primer_psicologo_activo
-
-
+# Umbral para activar la pregunta de cierre reflexiva (punto 1)
+UMBRAL_PREGUNTA_CIERRE = 0.70
+# Porcentaje mínimo del espectro líder para cerrar la evaluación (punto 5)
+PORCENTAJE_MINIMO_ESPECTRO = 0.60
+ 
+ 
 def crear_evaluacion(db: Session, id_candidato: int, id_psicologo: int) -> Evaluacion:
     """Crea una nueva sesión de evaluación y genera el token único."""
     token = str(uuid.uuid4())
     expiracion = datetime.utcnow() + timedelta(minutes=settings.SESSION_EXPIRE_MINUTES)
-
+ 
     evaluacion = Evaluacion(
         id_usuario_candidato=id_candidato,
         id_usuario_psicologo=id_psicologo,
@@ -41,20 +40,12 @@ def crear_evaluacion(db: Session, id_candidato: int, id_psicologo: int) -> Evalu
         token_sesion=token,
         fecha_expiracion_token=expiracion,
     )
-    return guardar_evaluacion(db, evaluacion)
-
-
-def crear_evaluacion_automatica(db: Session, id_candidato: int) -> Evaluacion | None:
-    """
-    Crea evaluación automáticamente al login del candidato (Opción B).
-    Asigna como supervisor al primer psicólogo activo del sistema.
-    """
-    psicologo = obtener_primer_psicologo_activo(db)
-    if not psicologo:
-        return None
-    return crear_evaluacion(db, id_candidato, psicologo.id_usuario)
-
-
+    db.add(evaluacion)
+    db.commit()
+    db.refresh(evaluacion)
+    return evaluacion
+ 
+ 
 def obtener_primera_pregunta(db: Session) -> dict | None:
     """Retorna el nodo raíz del grafo para iniciar la evaluación."""
     grafo = construir_grafo(db)
@@ -63,8 +54,8 @@ def obtener_primera_pregunta(db: Session) -> dict | None:
         return None
     data = grafo.nodes[nodo_id]
     return {"id_nodo": nodo_id, "texto_pregunta": data["texto"]}
-
-
+ 
+ 
 def procesar_respuesta(
     db: Session,
     id_evaluacion: int,
@@ -77,29 +68,30 @@ def procesar_respuesta(
     1. Valida longitud mínima (RN-01)
     2. Procesa con motor NLP determinista
     3. Persiste respuesta y rastro de auditoría
-    4. Recalcula probabilidades acumuladas desde la BD (evitando duplicación)
+    4. Recalcula probabilidades acumuladas desde la BD
     5. Verifica umbral de certeza (solo si hay mínimo de evidencia)
     6. Selecciona siguiente nodo o cierra la evaluación
     """
-    evaluacion = obtener_evaluacion_por_id(db, id_evaluacion)
-
+    evaluacion = db.query(Evaluacion).filter(
+        Evaluacion.id_evaluacion == id_evaluacion
+    ).first()
+ 
     # RN-03: verificar expiración de sesión
-    # (desactivado en entorno de pruebas — comentar/descomentar según necesidad)
-    # if evaluacion.fecha_expiracion_token and datetime.utcnow() > evaluacion.fecha_expiracion_token:
-    #     evaluacion.estado = "invalida"
-    #     commit(db)
-    #     return {"estado": "sesion_expirada"}
-
+    if evaluacion.fecha_expiracion_token and datetime.utcnow() > evaluacion.fecha_expiracion_token:
+        evaluacion.estado = "invalida"
+        db.commit()
+        return {"estado": "sesion_expirada"}
+ 
     # Procesar texto con motor NLP
     resultado_nlp = analizar_texto(texto)
-
+ 
     # RN-01: respuesta muy corta
     if not resultado_nlp["es_valida"]:
         return {
             "estado": "respuesta_corta",
             "min_palabras": settings.MIN_PALABRAS_RESPUESTA
         }
-
+ 
     # Persistir respuesta
     respuesta = RespuestaCandicato(
         id_evaluacion=id_evaluacion,
@@ -109,93 +101,142 @@ def procesar_respuesta(
         conteo_palabras=resultado_nlp["conteo_palabras"],
         es_valida=resultado_nlp["es_valida"],
     )
-    respuesta = guardar_respuesta(db, respuesta)
-
+    db.add(respuesta)
+    db.flush()
+ 
     # Persistir rastro de auditoría algorítmica
-    rastros = [
-        RastroAuditoriaNLP(id_respuesta=respuesta.id_respuesta, **r)
-        for r in resultado_nlp["rastros"]
-    ]
-    guardar_rastros(db, rastros)
-
+    for rastro in resultado_nlp["rastros"]:
+        registro = RastroAuditoriaNLP(
+            id_respuesta=respuesta.id_respuesta,
+            **rastro,
+        )
+        db.add(registro)
+ 
     # RN-04: detectar evasión sistemática
     if resultado_nlp["es_evasiva"]:
         _verificar_evasion_sistematica(db, evaluacion)
-
-    # Recalcular puntajes acumulados desde la BD (tu ajuste — sin pasar nuevos como parámetro)
+ 
+    # Recalcular puntajes acumulados desde la BD (incluyendo la respuesta recién guardada)
     puntajes_acumulados = _calcular_puntajes_acumulados(db, id_evaluacion)
     probabilidades = calcular_probabilidades(puntajes_acumulados)
-
+ 
     # RN-02: verificar umbral solo si hay suficiente evidencia
-    cantidad_validas = contar_respuestas_validas(db, id_evaluacion)
+    cantidad_validas = db.query(RespuestaCandicato).filter(
+        RespuestaCandicato.id_evaluacion == id_evaluacion,
+        RespuestaCandicato.es_valida == True,
+    ).count()
+ 
     perfil_ganador = None
+ 
     if cantidad_validas >= settings.MIN_NODOS_REQUERIDOS:
-        perfil_ganador = verificar_umbral(probabilidades, evaluacion.umbral_configurado)
-
+        perfil_candidato = verificar_umbral(probabilidades, evaluacion.umbral_configurado)
+ 
+        # Punto 5 — doble condicional: certeza suficiente Y espectro líder ≥ 60%
+        if perfil_candidato:
+            porcentaje_lider = probabilidades.get(perfil_candidato, 0.0)
+            if porcentaje_lider >= PORCENTAJE_MINIMO_ESPECTRO:
+                perfil_ganador = perfil_candidato
+            # Si la certeza llegó pero el espectro líder < 60%, continuamos
+            # recabando evidencia — no cerramos todavía
+ 
     if perfil_ganador:
         return _cerrar_evaluacion(db, evaluacion, perfil_ganador, probabilidades)
-
+ 
     # Seleccionar siguiente nodo adaptativo
     grafo = construir_grafo(db)
     nodos_visitados = [r.id_nodo for r in evaluacion.respuestas]
+ 
+    # Punto 1 — inyectar pregunta cierre cuando certeza supera 0.70
+    # Se inyecta UNA sola vez, como penúltima pregunta antes del cierre definitivo
+    certeza_actual = max(probabilidades.values()) if probabilidades else 0.0
+    if certeza_actual >= UMBRAL_PREGUNTA_CIERRE:
+        nodo_cierre = db.query(NodoPregunta).filter(
+            NodoPregunta.es_cierre == True,
+            NodoPregunta.estado_activo == True,
+        ).first()
+        if nodo_cierre and nodo_cierre.id_nodo not in nodos_visitados:
+            evaluacion.estado = "en_curso"
+            db.commit()
+            return {
+                "estado": "continuar",
+                "probabilidades": probabilidades,
+                "siguiente_nodo": {
+                    "id_nodo": nodo_cierre.id_nodo,
+                    "texto_pregunta": nodo_cierre.texto_pregunta,
+                },
+                "metricas_auditoria": _build_metricas(evaluacion, probabilidades, resultado_nlp),
+            }
+ 
     siguiente = seleccionar_siguiente_nodo(
         grafo, id_nodo, puntajes_acumulados, nodos_visitados
     )
-
+ 
     if not siguiente:
         perfil_max = max(probabilidades, key=probabilidades.get)
         return _cerrar_evaluacion(db, evaluacion, perfil_max, probabilidades)
-
+ 
     evaluacion.estado = "en_curso"
-    commit(db)
-
-    # Métricas de auditoría para el panel de pruebas del frontend (tu ajuste)
-    espectro_lider = max(probabilidades, key=probabilidades.get) if probabilidades else "Indefinido"
-    puntaje_lider = probabilidades.get(espectro_lider, 0.0)
-    tokens_detectados = [
-        rastro.get("palabra_clave") or rastro.get("token") or rastro.get("palabra") or str(rastro)
-        for rastro in resultado_nlp.get("rastros", [])
-    ]
-    metricas_auditoria = {
-        "espectro_dominante": espectro_lider,
-        "puntaje_acumulado": float(puntaje_lider),
-        "umbral_corte": float(evaluacion.umbral_configurado or 1.0),
-        "palabras_clave_detectadas": tokens_detectados,
-    }
-
+    db.commit()
+ 
     siguiente_data = grafo.nodes[siguiente]
     return {
         "estado": "continuar",
         "probabilidades": probabilidades,
         "siguiente_nodo": {"id_nodo": siguiente, "texto_pregunta": siguiente_data["texto"]},
-        "metricas_auditoria": metricas_auditoria,
+        "metricas_auditoria": _build_metricas(evaluacion, probabilidades, resultado_nlp),
     }
-
-
+ 
+ 
 # ------------------------------------------------------------------
 # Funciones privadas de soporte
 # ------------------------------------------------------------------
-
+ 
 def _cerrar_evaluacion(
     db: Session,
     evaluacion: Evaluacion,
     perfil: str,
     probabilidades: dict
 ) -> dict:
-    """Marca la evaluación como completada y persiste el resultado."""
+    """
+    Marca la evaluación como completada y persiste el resultado.
+ 
+    Punto 7 — Redefinición del Híbrido:
+    Si tanto Dominante como Sumiso superan el 30%, el perfil final es Híbrido,
+    independientemente de cuál haya disparado el umbral.
+    En ese caso se incluye 'distribucion_hibrida' con la proporción D/S relativa
+    (sin contar Híbrido) para el gráfico secundario del frontend.
+    """
+    d = probabilidades.get("Dominante", 0.0)
+    s = probabilidades.get("Sumiso", 0.0)
+ 
+    # Condición híbrida: ambos espectros polares superan el 30%
+    es_hibrido = d >= 0.30 and s >= 0.30
+    perfil_final = "Hibrido" if es_hibrido else perfil
+ 
     evaluacion.estado = "completada"
-    evaluacion.perfil_predominante = perfil
-    evaluacion.porcentaje_confianza = probabilidades[perfil]
+    evaluacion.perfil_predominante = perfil_final
+    evaluacion.porcentaje_confianza = probabilidades.get(perfil_final, max(d, s))
     evaluacion.fecha_fin = datetime.utcnow()
-    commit(db)
-    return {
+    db.commit()
+ 
+    respuesta = {
         "estado": "completada",
-        "perfil": perfil,
-        "confianza": probabilidades[perfil],
+        "perfil": perfil_final,
+        "confianza": probabilidades.get(perfil_final, max(d, s)),
         "probabilidades": probabilidades,
     }
-
-
+ 
+    # Agregar distribución secundaria D vs S para el gráfico del reporte híbrido
+    if es_hibrido:
+        total_polar = d + s
+        respuesta["distribucion_hibrida"] = {
+            "Dominante": round(d / total_polar, 4) if total_polar > 0 else 0.5,
+            "Sumiso":    round(s / total_polar, 4) if total_polar > 0 else 0.5,
+        }
+ 
+    return respuesta
+ 
+ 
 def _calcular_puntajes_acumulados(db: Session, id_evaluacion: int) -> dict:
     """
     Suma los puntajes de toda la evaluación desde la BD.
@@ -203,20 +244,43 @@ def _calcular_puntajes_acumulados(db: Session, id_evaluacion: int) -> dict:
     evitando duplicación al no mezclar puntajes en memoria con los persistidos.
     """
     acumulado = {"Dominante": 0.0, "Hibrido": 0.0, "Sumiso": 0.0}
-    respuestas = obtener_respuestas_validas(db, id_evaluacion)
+    respuestas = db.query(RespuestaCandicato).filter(
+        RespuestaCandicato.id_evaluacion == id_evaluacion,
+        RespuestaCandicato.es_valida == True,
+    ).all()
     for r in respuestas:
         for rastro in r.rastros:
             acumulado[rastro.perfil_asignado] = round(
                 acumulado[rastro.perfil_asignado] + rastro.puntos_sumados, 4
             )
     return acumulado
-
-
+ 
+ 
+def _build_metricas(evaluacion, probabilidades: dict, resultado_nlp: dict) -> dict:
+    """Construye el bloque de métricas de auditoría para el frontend."""
+    espectro_lider = max(probabilidades, key=probabilidades.get) if probabilidades else "Indefinido"
+    puntaje_lider = probabilidades.get(espectro_lider, 0.0)
+    tokens_detectados = [
+        rastro.get("palabra_clave") or rastro.get("token") or rastro.get("palabra") or str(rastro)
+        for rastro in resultado_nlp.get("rastros", [])
+    ]
+    return {
+        "espectro_dominante": espectro_lider,
+        "puntaje_acumulado": float(puntaje_lider),
+        "umbral_corte": float(evaluacion.umbral_configurado or 1.0),
+        "palabras_clave_detectadas": tokens_detectados,
+    }
+ 
+ 
 def _verificar_evasion_sistematica(db: Session, evaluacion: Evaluacion):
     """Marca como inconclusa si más del 60% de respuestas válidas son evasivas."""
-    respuestas = obtener_respuestas_validas(db, evaluacion.id_evaluacion)
+    respuestas = db.query(RespuestaCandicato).filter(
+        RespuestaCandicato.id_evaluacion == evaluacion.id_evaluacion,
+        RespuestaCandicato.es_valida == True,
+    ).all()
     sin_rastro = [r for r in respuestas if not r.rastros]
     if len(respuestas) >= 3 and len(sin_rastro) / len(respuestas) > 0.6:
         evaluacion.estado = "inconclusa_evasion"
         evaluacion.fecha_fin = datetime.utcnow()
-        commit(db)
+        db.commit()
+ 

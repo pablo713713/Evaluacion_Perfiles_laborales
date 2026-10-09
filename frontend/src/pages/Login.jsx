@@ -37,6 +37,8 @@ function Login() {
         window.location.href = '/dashboard'
       } else if (rol === 'Administrador') {
         window.location.href = '/admin'
+      } else if (rol === 'PsicologoLider') {
+        window.location.href = '/dashboard'
       }
 
     } catch (err) {
@@ -55,14 +57,14 @@ function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-white flex items-center justify-center px-4">
+    <div className="min-h-screen bg-[#0f3846] flex items-center justify-center px-4">
       <div className="w-full max-w-sm">
 
         {/* Header */}
         <div className="mb-10">
-          <div className="w-8 h-px bg-gray-300 mb-8" />
-          <h1 className="text-2xl font-light text-gray-800">Iniciar sesión</h1>
-          <p className="mt-2 text-sm text-gray-400">
+          <div className="w-8 h-px bg-[#fef08a] mb-8" />
+          <h1 className="text-2xl font-light text-white">Iniciar sesión</h1>
+          <p className="mt-2 text-sm text-cyan-100/70">
             Sistema de Evaluación de Perfiles
           </p>
         </div>
@@ -70,7 +72,7 @@ function Login() {
         {/* Formulario */}
         <div className="space-y-4">
           <div>
-            <label className="block text-xs text-gray-500 uppercase tracking-widest mb-2">
+            <label className="block text-xs text-cyan-100/80 uppercase tracking-widest mb-2">
               Correo electrónico
             </label>
             <input
@@ -79,13 +81,12 @@ function Login() {
               onChange={(e) => setCorreo(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="correo@ejemplo.com"
-              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-gray-700
-                         focus:outline-none focus:border-gray-400 transition-colors duration-200"
+              className="w-full bg-[#0b2a35] border border-[#1e5263] rounded-lg px-4 py-3 text-white placeholder-cyan-100/40 focus:outline-none focus:border-[#fef08a] transition-colors duration-200"
             />
           </div>
 
           <div>
-            <label className="block text-xs text-gray-500 uppercase tracking-widest mb-2">
+            <label className="block text-xs text-cyan-100/80 uppercase tracking-widest mb-2">
               Contraseña
             </label>
             <input
@@ -94,21 +95,18 @@ function Login() {
               onChange={(e) => setPassword(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="••••••••"
-              className="w-full border border-gray-200 rounded-lg px-4 py-3 text-gray-700
-                         focus:outline-none focus:border-gray-400 transition-colors duration-200"
+              className="w-full bg-[#0b2a35] border border-[#1e5263] rounded-lg px-4 py-3 text-white placeholder-cyan-100/40 focus:outline-none focus:border-[#fef08a] transition-colors duration-200"
             />
           </div>
 
           {error && (
-            <p className="text-sm text-red-500">{error}</p>
+            <p className="text-sm text-red-400">{error}</p>
           )}
 
           <button
             onClick={handleLogin}
             disabled={cargando}
-            className="w-full bg-gray-800 text-white py-3 rounded-lg text-sm
-                       hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed
-                       transition-colors duration-200 mt-2"
+            className="w-full bg-[#fef08a] text-[#0f3846] font-semibold py-3 rounded-lg text-sm hover:bg-[#fef9c3] disabled:bg-gray-600 disabled:text-gray-400 disabled:cursor-not-allowed transition-colors duration-200 mt-2"
           >
             {cargando ? 'Ingresando...' : 'Ingresar'}
           </button>

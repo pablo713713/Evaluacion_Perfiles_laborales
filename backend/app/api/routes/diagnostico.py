@@ -17,6 +17,7 @@ from app.infraestructure.db.models.rastro_auditoria import RastroAuditoriaNLP
 from app.infraestructure.db.models.usuario import Usuario
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 
+
 router = APIRouter(prefix="/api/diagnostico", tags=["Panel Analítico"])
  
  
@@ -147,15 +148,16 @@ def detalle_evaluacion(
             "es_valida": resp.es_valida,
             "rastro_lexico": [
                 {
-                    "id_rastro": r.id_rastro,
-                    "palabra":   r.palabra_o_frase_extraida,
-                    "lema":      r.verbo_lematizado,
-                    "perfil":    r.perfil_asignado,
-                    "puntos":    round(r.puntos_sumados, 3),
-                    "negacion":  r.tiene_negacion if hasattr(r, 'tiene_negacion') else False,
-                    "dependencia": r.dependencia_sintactica,
-                    "origen":    r.origen if hasattr(r, 'origen') else "automatico",
-                    "editado":   r.editado_por_psicologo if hasattr(r, 'editado_por_psicologo') else False,
+                    "id_rastro":    r.id_rastro,
+                    "id_respuesta": resp.id_respuesta,
+                    "palabra":      r.palabra_o_frase_extraida,
+                    "lema":         r.verbo_lematizado,
+                    "perfil":       r.perfil_asignado,
+                    "puntos":       round(r.puntos_sumados, 3),
+                    "negacion":     r.tiene_negacion if hasattr(r, 'tiene_negacion') else False,
+                    "dependencia":  r.dependencia_sintactica,
+                    "origen":       r.origen if hasattr(r, 'origen') else "automatico",
+                    "editado":      r.editado_por_psicologo if hasattr(r, 'editado_por_psicologo') else False,
                 }
                 for r in rastros
             ],
@@ -411,5 +413,64 @@ def crear_rastro_manual(
             "Hibrido":   round(probs["Hibrido"]   * 100, 1),
             "Sumiso":    round(probs["Sumiso"]     * 100, 1),
         }
+    }
+ 
+ 
+# ─── Endpoint 4: Registrar alerta clínica ────────────────────────────────────
+ 
+class AlertaBody(BaseModel):
+    id_respuesta: int
+    texto_marcado: str       # palabra o frase que activa la alerta
+    etiqueta_alerta: str     # ej. "narcisismo", "bipolaridad"
+    peso: float              # 0.1 – 1.0
+ 
+ 
+@router.post("/rastros-alerta")
+def crear_rastro_alerta(
+    body: AlertaBody,
+    db: Session = Depends(get_db),
+    _=Depends(require_psicologo)
+):
+    """
+    Registra una alerta clínica visual como rastro especial (origen='alerta').
+    No afecta la distribución D/H/S — puntos_sumados=0 para el espectro neutro.
+    El frontend lee estos rastros al cargar y reconstruye el gráfico de alertas.
+    """
+    from app.infraestructure.db.models.rastro_auditoria import RastroAuditoriaNLP
+    from app.infraestructure.db.models.respuesta_candidato import RespuestaCandicato
+ 
+    peso = max(0.1, min(1.0, body.peso))
+ 
+    respuesta = db.query(RespuestaCandicato).filter(
+        RespuestaCandicato.id_respuesta == body.id_respuesta
+    ).first()
+    if not respuesta:
+        raise HTTPException(status_code=404, detail="Respuesta no encontrada")
+ 
+    rastro_alerta = RastroAuditoriaNLP(
+        id_respuesta             = body.id_respuesta,
+        palabra_o_frase_extraida = body.texto_marcado,
+        verbo_lematizado         = body.etiqueta_alerta,   # etiqueta guardada aquí
+        dependencia_sintactica   = "alerta",
+        pos_tag                  = "ALERTA",
+        perfil_asignado          = "Hibrido",              # neutro — no afecta distribución
+        puntos_sumados           = 0.0,                    # no suma a ningún espectro
+        tiene_negacion           = False,
+        origen                   = "alerta",
+        editado_por_psicologo    = True,
+    )
+    # peso se guarda en un campo auxiliar — reutilizamos tiene_negacion=False
+    # y almacenamos el peso en el campo dependencia_sintactica serializado
+    rastro_alerta.dependencia_sintactica = f"alerta:{peso}"
+ 
+    db.add(rastro_alerta)
+    db.commit()
+    db.refresh(rastro_alerta)
+ 
+    return {
+        "ok": True,
+        "id_rastro": rastro_alerta.id_rastro,
+        "etiqueta": body.etiqueta_alerta,
+        "peso": peso,
     }
  

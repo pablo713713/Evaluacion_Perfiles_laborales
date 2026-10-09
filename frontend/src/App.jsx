@@ -24,7 +24,7 @@ function App() {
         } />
 
         <Route path="/dashboard" element={
-          <ProtectedRoute rolesPermitidos={['Psicologo']}>
+          <ProtectedRoute rolesPermitidos={['Psicologo', 'PsicologoLider']}>
             <PsicologoPage />
           </ProtectedRoute>
         } />

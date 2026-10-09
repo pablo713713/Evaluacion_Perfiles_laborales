@@ -143,39 +143,39 @@ function CandidatoPage() {
 
   if (estado === 'cargando') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <p className="text-gray-400 text-sm tracking-wide">Cargando evaluación...</p>
+      <div className="min-h-screen flex items-center justify-center bg-[#0f3846]">
+        <p className="text-[#fef08a] text-sm tracking-wide">Cargando evaluación...</p>
       </div>
     )
   }
 
   if (estado === 'completado') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="max-w-md text-center px-8">
-          <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-6">
-            <svg className="w-6 h-6 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <div className="min-h-screen flex items-center justify-center bg-[#0f3846] px-4">
+        <div className="max-w-md text-center px-8 bg-[#0b2a35] border border-[#1e5263] py-10 rounded-2xl shadow-xl">
+          <div className="w-12 h-12 bg-[#0f3846] border border-[#1e5263] rounded-full flex items-center justify-center mx-auto mb-6">
+            <svg className="w-6 h-6 text-[#fef08a]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
             </svg>
           </div>
-          <h2 className="text-xl font-light text-gray-800 mb-3">Evaluación completada</h2>
-          <p className="text-gray-500 text-sm leading-relaxed mb-6">
+          <h2 className="text-xl font-light text-white mb-3">Evaluación completada</h2>
+          <p className="text-cyan-100/80 text-sm leading-relaxed mb-6">
             Sus respuestas han sido registradas exitosamente.
             El equipo de Recursos Humanos se pondrá en contacto con usted.
           </p>
-          <p className="text-xs text-gray-400 mb-6">
+          <p className="text-xs text-cyan-100/50 mb-6">
             Si fue habilitado para repetir la evaluación, haga clic en el botón de abajo.
           </p>
           <div className="flex flex-col gap-3">
             <button
               onClick={verificarManualmente}
-              className="px-6 py-2.5 border border-gray-300 text-gray-600 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+              className="px-6 py-2.5 border border-[#1e5263] text-cyan-100 text-sm rounded-lg hover:bg-[#0f3846] hover:text-white transition-colors"
             >
               Verificar si puedo repetir
             </button>
             <button
               onClick={cerrarSesion}
-              className="px-6 py-2.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+              className="px-6 py-2.5 bg-[#fef08a] text-[#0f3846] font-semibold text-sm rounded-lg hover:bg-[#fef9c3] transition-colors"
             >
               Cerrar sesión
             </button>
@@ -187,16 +187,16 @@ function CandidatoPage() {
 
   if (estado === 'expirado') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-white">
-        <div className="max-w-md text-center px-8">
-          <h2 className="text-xl font-light text-gray-800 mb-3">Sesión expirada</h2>
-          <p className="text-gray-500 text-sm leading-relaxed mb-8">
+      <div className="min-h-screen flex items-center justify-center bg-[#0f3846] px-4">
+        <div className="max-w-md text-center px-8 bg-[#0b2a35] border border-[#1e5263] py-10 rounded-2xl shadow-xl">
+          <h2 className="text-xl font-light text-white mb-3">Sesión expirada</h2>
+          <p className="text-cyan-100/80 text-sm leading-relaxed mb-8">
             El tiempo disponible para completar la evaluación ha expirado.
             Por favor contacte al departamento de Recursos Humanos.
           </p>
           <button
             onClick={cerrarSesion}
-            className="px-6 py-2.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 transition-colors"
+            className="px-6 py-2.5 bg-[#fef08a] text-[#0f3846] font-semibold text-sm rounded-lg hover:bg-[#fef9c3] transition-colors"
           >
             Cerrar sesión
           </button>
@@ -208,8 +208,8 @@ function CandidatoPage() {
   // ── Pantalla activa ──────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4 py-12">
-      <div className="w-full max-w-2xl bg-white p-8 rounded-2xl shadow-sm border border-gray-100">
+    <div className="min-h-screen bg-[#0f3846] flex items-center justify-center px-4 py-12">
+      <div className="w-full max-w-2xl bg-white p-8 rounded-2xl shadow-xl border border-gray-100">
 
         {preguntaActual && (
           <PreguntaView
@@ -227,32 +227,32 @@ function CandidatoPage() {
         />
 
         {/* Panel de pruebas del motor psicométrico */}
-        <div className="mt-10 border-t border-dashed border-gray-300 pt-6">
+        <div className="mt-10 border-t border-dashed border-gray-200 pt-6">
           <div className="flex items-center justify-between mb-4">
-            <span className="text-xs font-bold uppercase tracking-wider text-amber-600 bg-amber-50 px-2 py-1 rounded border border-amber-200">
+            <span className="text-xs font-bold uppercase tracking-wider text-[#0f3846] bg-[#fef08a] px-2.5 py-1 rounded border border-[#fef08a]">
               Panel de Pruebas (Grafo Probabilístico)
             </span>
             <span className="text-xs text-gray-400">Puntaje acumulado en tiempo real</span>
           </div>
 
           {metricas ? (
-            <div className="bg-gray-900 text-gray-100 p-5 rounded-xl text-xs space-y-4 font-mono">
+            <div className="bg-[#0b2a35] text-gray-100 p-5 rounded-xl text-xs space-y-4 font-mono border border-[#1e5263]">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p className="text-gray-400">Espectro Actual:</p>
-                  <p className="text-sm font-bold text-yellow-400 mt-0.5">
+                  <p className="text-cyan-100/60">Espectro Actual:</p>
+                  <p className="text-sm font-bold text-[#fef08a] mt-0.5">
                     {metricas.espectro_dominante || 'Evaluando...'}
                   </p>
                 </div>
                 <div>
-                  <p className="text-gray-400">Score / Umbral de Corte:</p>
+                  <p className="text-cyan-100/60">Score / Umbral de Corte:</p>
                   <p className="text-sm font-bold text-emerald-400 mt-0.5">
                     {metricas.puntaje_acumulado?.toFixed(2) || '0.00'} / {metricas.umbral_corte?.toFixed(2) || '1.00'}
                   </p>
                 </div>
               </div>
               <div>
-                <div className="flex justify-between text-[11px] text-gray-400 mb-1">
+                <div className="flex justify-between text-[11px] text-cyan-100/60 mb-1">
                   <span>Progresión hacia finalización por convergencia</span>
                   <span>
                     {Math.min(
@@ -261,9 +261,9 @@ function CandidatoPage() {
                     )}%
                   </span>
                 </div>
-                <div className="w-full bg-gray-800 h-2.5 rounded-full overflow-hidden border border-gray-700">
+                <div className="w-full bg-[#0f3846] h-2.5 rounded-full overflow-hidden border border-[#1e5263]">
                   <div
-                    className="bg-emerald-500 h-full transition-all duration-500 ease-out"
+                    className="bg-emerald-400 h-full transition-all duration-500 ease-out"
                     style={{
                       width: `${Math.min(
                         ((metricas.puntaje_acumulado || 0) / (metricas.umbral_corte || 1)) * 100,
@@ -274,17 +274,17 @@ function CandidatoPage() {
                 </div>
               </div>
               <div>
-                <p className="text-gray-400 mb-1">Palabras clave/Tokens extraídos:</p>
+                <p className="text-cyan-100/60 mb-1">Palabras clave/Tokens extraídos:</p>
                 {metricas.palabras_clave_detectadas?.length > 0 ? (
                   <div className="flex flex-wrap gap-1.5">
                     {metricas.palabras_clave_detectadas.map((token, i) => (
-                      <span key={i} className="bg-gray-800 border border-gray-700 text-emerald-300 px-2 py-0.5 rounded text-[11px]">
+                      <span key={i} className="bg-[#0f3846] border border-[#1e5263] text-emerald-300 px-2 py-0.5 rounded text-[11px]">
                         {token}
                       </span>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-gray-500 italic">Ninguna palabra clave registrada en la última respuesta.</p>
+                  <p className="text-cyan-100/40 italic">Ninguna palabra clave registrada en la última respuesta.</p>
                 )}
               </div>
             </div>

@@ -3,7 +3,9 @@ import BancoPreguntas from '../components/psychologist/BancoPreguntas'
 import Dashboard from '../components/psychologist/Dashboard'
 
 function PsicologoPage() {
-  const [vista, setVista] = useState('banco')
+  const rol = localStorage.getItem('rol')          // 'Psicologo' | 'PsicologoLider'
+  const esLider = rol === 'PsicologoLider'
+  const [vista, setVista] = useState(esLider ? 'banco' : 'dashboard')
 
   const cerrarSesion = () => {
     localStorage.removeItem('token')
@@ -13,30 +15,32 @@ function PsicologoPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <div className="bg-white border-b border-gray-100 px-8 py-4 flex items-center justify-between">
+      {/* Header en Azul Petróleo */}
+      <div className="bg-[#0f3846] border-b border-[#0b2a35] px-8 py-4 flex items-center justify-between shadow-sm">
         <div>
-          <h1 className="text-lg font-medium text-gray-800">Panel del Psicólogo</h1>
-          <p className="text-xs text-gray-400 mt-0.5">Configuración y análisis del sistema</p>
+          <h1 className="text-lg font-medium text-white">Panel del Psicólogo</h1>
+          <p className="text-xs text-cyan-100/70 mt-0.5">Configuración y análisis del sistema</p>
         </div>
         <div className="flex items-center gap-6">
-          <nav className="flex gap-1">
-            <button
-              onClick={() => setVista('banco')}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
-                vista === 'banco'
-                  ? 'bg-gray-100 text-gray-800 font-medium'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              Banco de preguntas
-            </button>
+          <nav className="flex gap-2">
+            {esLider && (
+              <button
+                onClick={() => setVista('banco')}
+                className={`px-4 py-2 text-sm rounded-lg transition-colors duration-200 ${
+                  vista === 'banco'
+                    ? 'bg-[#fef08a] text-[#0f3846] font-semibold'
+                    : 'text-gray-200 hover:bg-[#fef08a] hover:text-[#0f3846]'
+                }`}
+              >
+                Banco de preguntas
+              </button>
+            )}
             <button
               onClick={() => setVista('dashboard')}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+              className={`px-4 py-2 text-sm rounded-lg transition-colors duration-200 ${
                 vista === 'dashboard'
-                  ? 'bg-gray-100 text-gray-800 font-medium'
-                  : 'text-gray-500 hover:text-gray-700'
+                  ? 'bg-[#fef08a] text-[#0f3846] font-semibold'
+                  : 'text-gray-200 hover:bg-[#fef08a] hover:text-[#0f3846]'
               }`}
             >
               Panel analítico
@@ -44,7 +48,7 @@ function PsicologoPage() {
           </nav>
           <button
             onClick={cerrarSesion}
-            className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
+            className="text-sm text-gray-200 hover:text-[#fef08a] transition-colors"
           >
             Cerrar sesión
           </button>
@@ -52,7 +56,7 @@ function PsicologoPage() {
       </div>
 
       {/* Contenido */}
-      <div className="w-full px-4 py-6">
+      <div className="max-w-5xl mx-auto px-8 py-10">
         {vista === 'banco' && <BancoPreguntas />}
         {vista === 'dashboard' && <Dashboard />}
       </div>
