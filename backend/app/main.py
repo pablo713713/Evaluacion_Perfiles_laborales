@@ -10,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes import auth, users, evaluaciones, preguntas, diagnostico
 from app.infraestructure.db import base  # registra todos los modelos SQLAlchemy
+import os
 
 app = FastAPI(
     title="Sistema de Evaluación de Perfiles Laborales",
@@ -17,9 +18,15 @@ app = FastAPI(
     version="1.0.0",
 )
 
+# En producción se lee FRONTEND_URL del entorno; en desarrollo acepta localhost
+_origins = ["http://localhost:5173", "http://localhost:3000"]
+_frontend_url = os.getenv("FRONTEND_URL", "")
+if _frontend_url:
+    _origins.append(_frontend_url)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
