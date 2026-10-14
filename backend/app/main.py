@@ -18,11 +18,12 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# En producción se lee FRONTEND_URL del entorno; en desarrollo acepta localhost
-_origins = ["http://localhost:5173", "http://localhost:3000"]
-_frontend_url = os.getenv("FRONTEND_URL", "")
-if _frontend_url:
-    _origins.append(_frontend_url)
+_origins = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "https://evaluacion-perfiles-laborales.vercel.app",
+    "https://evaluacion-perfiles-laborales-cyxi-rde120gy5.vercel.app",
+]
 
 app.add_middleware(
     CORSMiddleware,
