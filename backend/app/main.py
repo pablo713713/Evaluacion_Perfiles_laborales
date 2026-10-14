@@ -21,13 +21,13 @@ app = FastAPI(
 _origins = [
     "http://localhost:5173",
     "http://localhost:3000",
-    "https://evaluacion-perfiles-laborales.vercel.app",
-    "https://evaluacion-perfiles-laborales-cyxi-rde120gy5.vercel.app",
 ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_origins,
+    # Vercel genera una URL distinta en cada deploy; aceptamos todas las del proyecto
+    allow_origin_regex=r"https://evaluacion-perfiles-laborales[a-z0-9\-]*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
