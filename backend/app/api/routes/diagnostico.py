@@ -10,7 +10,7 @@ from datetime import datetime
 from app.domain.nlp.motor_cat import calcular_probabilidades as _calc_probs
 
 from app.infraestructure.db.database import get_db
-from app.infraestructure.security.dependencies import require_psicologo
+from app.infraestructure.security.dependencies import require_psicologo_o_lider
 from app.infraestructure.db.models.evaluacion import Evaluacion
 from app.infraestructure.db.models.respuesta_candidato import RespuestaCandicato
 from app.infraestructure.db.models.rastro_auditoria import RastroAuditoriaNLP
@@ -33,7 +33,7 @@ class DiagnosticoBody(BaseModel):
 @router.get("/evaluaciones")
 def listar_evaluaciones_completadas(
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """
     Lista todas las evaluaciones completadas con datos del candidato
@@ -80,7 +80,7 @@ def listar_evaluaciones_completadas(
 def detalle_evaluacion(
     id_evaluacion: int,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """
     Retorna el detalle completo de una evaluación:
@@ -195,7 +195,7 @@ def detalle_evaluacion(
 def obtener_diagnostico(
     id_evaluacion: int,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """Retorna el diagnóstico guardado para una evaluación."""
     ev = db.query(Evaluacion).filter(
@@ -227,7 +227,7 @@ def guardar_diagnostico(
     id_evaluacion: int,
     body: DiagnosticoBody,
     db: Session = Depends(get_db),
-    psicologo=Depends(require_psicologo)
+    psicologo=Depends(require_psicologo_o_lider)
 ):
     """Guarda o actualiza el diagnóstico clínico del psicólogo."""
     ev = db.query(Evaluacion).filter(
@@ -286,7 +286,7 @@ def _recalcular_distribucion(db, id_evaluacion: int):
 def obtener_distribucion(
     id_evaluacion: int,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """Retorna la distribución de probabilidad recalculada desde los rastros actuales."""
     probs = _recalcular_distribucion(db, id_evaluacion)
@@ -312,7 +312,7 @@ def editar_rastro(
     id_rastro: int,
     body: EditarRastroBody,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """
     Edita el perfil y peso de un rastro existente.
@@ -368,7 +368,7 @@ class RastroManualBody(BaseModel):
 def crear_rastro_manual(
     body: RastroManualBody,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """
     Crea un rastro manual desde una selección libre de texto del psicólogo.
@@ -429,7 +429,7 @@ class AlertaBody(BaseModel):
 def crear_rastro_alerta(
     body: AlertaBody,
     db: Session = Depends(get_db),
-    _=Depends(require_psicologo)
+    _=Depends(require_psicologo_o_lider)
 ):
     """
     Registra una alerta clínica visual como rastro especial (origen='alerta').
@@ -473,4 +473,3 @@ def crear_rastro_alerta(
         "etiqueta": body.etiqueta_alerta,
         "peso": peso,
     }
- 

@@ -6,6 +6,8 @@ def autenticar_usuario(db: Session, correo: str, password: str) -> dict | None:
     user = db.query(Usuario).filter(Usuario.correo == correo).first()
     if not user or not verify_password(password, user.password_hash):
         return None
+    # Un usuario desactivado por el administrador no puede iniciar sesión
+    if user.estado_cuenta != "activo":
+        return None
     token = create_access_token({"sub": str(user.id_usuario), "rol": user.rol.nombre_rol})
     return {"access_token": token, "token_type": "bearer", "rol": user.rol.nombre_rol}
- 

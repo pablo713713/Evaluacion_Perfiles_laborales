@@ -111,10 +111,16 @@ def procesar_respuesta(
             **rastro,
         )
         db.add(registro)
- 
+    # La sesión usa autoflush=False: sin este flush, las consultas siguientes
+    # no verían los rastros de esta respuesta y sus puntos no se sumarían.
+    db.flush()
+
     # RN-04: detectar evasión sistemática
     if resultado_nlp["es_evasiva"]:
         _verificar_evasion_sistematica(db, evaluacion)
+        if evaluacion.estado == "inconclusa_evasion":
+            # Se corta aquí; si no, el flujo sobrescribiría el estado más abajo
+            return {"estado": "inconclusa_evasion"}
  
     # Recalcular puntajes acumulados desde la BD (incluyendo la respuesta recién guardada)
     puntajes_acumulados = _calcular_puntajes_acumulados(db, id_evaluacion)
@@ -261,7 +267,7 @@ def _build_metricas(evaluacion, probabilidades: dict, resultado_nlp: dict) -> di
     espectro_lider = max(probabilidades, key=probabilidades.get) if probabilidades else "Indefinido"
     puntaje_lider = probabilidades.get(espectro_lider, 0.0)
     tokens_detectados = [
-        rastro.get("palabra_clave") or rastro.get("token") or rastro.get("palabra") or str(rastro)
+        rastro.get("palabra_o_frase_extraida") or str(rastro)
         for rastro in resultado_nlp.get("rastros", [])
     ]
     return {
@@ -283,4 +289,3 @@ def _verificar_evasion_sistematica(db: Session, evaluacion: Evaluacion):
         evaluacion.estado = "inconclusa_evasion"
         evaluacion.fecha_fin = datetime.utcnow()
         db.commit()
- 
