@@ -56,14 +56,28 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
     if not ev or ev.estado not in ("pendiente", "en_curso"):
         from app.infraestructure.db.models.usuario import Usuario
         from app.infraestructure.db.models.rol import Rol
+            # Sin evaluación o en estado inesperado → crear nueva
+    if not ev or ev.estado not in ("pendiente", "en_curso"):
+        from app.infraestructure.db.models.usuario import Usuario
+        from app.infraestructure.db.models.rol import Rol
+
+        # Cualquier rol de psicólogo puede quedar asignado a la evaluación
+        ROLES_PSICOLOGO = ("Psicologo", "PsicologoLider")
+
         psicologo_default = (
             db.query(Usuario)
             .join(Rol)
-            .filter(Rol.nombre_rol == "Psicologo", Usuario.estado_cuenta == "activo")
+            .filter(
+                Rol.nombre_rol.in_(ROLES_PSICOLOGO),
+                Usuario.estado_cuenta == "activo",
+            )
             .first()
         )
         if not psicologo_default:
-            raise HTTPException(status_code=500, detail="No hay ningún psicólogo activo en el sistema")
+            raise HTTPException(
+                status_code=409,
+                detail="No hay ningún psicólogo activo en el sistema",
+            )
         ev = crear_evaluacion(db, candidato.id_usuario, psicologo_default.id_usuario)
 
     # Construir grafo y determinar pregunta actual
