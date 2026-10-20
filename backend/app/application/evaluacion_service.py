@@ -21,6 +21,7 @@ from app.domain.nlp.motor_cat import (
 )
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 
+
 # Umbral para activar la pregunta de cierre reflexiva (punto 1)
 UMBRAL_PREGUNTA_CIERRE = 0.70
 # Porcentaje mínimo del espectro líder para cerrar la evaluación (punto 5)
@@ -65,6 +66,44 @@ def obtener_primera_pregunta(db: Session) -> dict | None:
     return {"id_nodo": nodo_id, "texto_pregunta": data["texto"]}
  
  
+def obtener_pregunta_pendiente(db: Session, evaluacion: Evaluacion) -> dict | None:
+    """
+    Retorna la pregunta que el candidato tiene pendiente de responder.
+    1. Si hay id_nodo_actual guardado y sigue activo, se usa ese.
+    2. Si no hay respuestas, se usa el nodo raíz.
+    3. Si hay respuestas pero no id_nodo_actual (evaluaciones creadas
+       antes de este cambio), se recalcula con el motor CAT.
+    Retorna None si no queda ninguna pregunta disponible.
+    """
+    grafo = construir_grafo(db)
+
+    if evaluacion.id_nodo_actual and evaluacion.id_nodo_actual in grafo.nodes:
+        nodo_id = evaluacion.id_nodo_actual
+    else:
+        respuestas = (
+            db.query(RespuestaCandicato)
+            .filter(RespuestaCandicato.id_evaluacion == evaluacion.id_evaluacion)
+            .order_by(RespuestaCandicato.fecha_hora.desc())
+            .all()
+        )
+        if not respuestas:
+            nodo_id = obtener_nodo_raiz(grafo)
+        else:
+            visitados = [r.id_nodo for r in respuestas]
+            nodo_id = seleccionar_siguiente_nodo(
+                grafo,
+                respuestas[0].id_nodo,
+                _calcular_puntajes_acumulados(db, evaluacion.id_evaluacion),
+                visitados,
+            )
+        if not nodo_id:
+            return None
+        evaluacion.id_nodo_actual = nodo_id
+        db.commit()
+
+    return {"id_nodo": nodo_id, "texto_pregunta": grafo.nodes[nodo_id]["texto"]}
+
+
 def procesar_respuesta(
     db: Session,
     id_evaluacion: int,
@@ -98,6 +137,25 @@ def procesar_respuesta(
         db.commit()
         return {"estado": "sesion_expirada"}
  
+    # Evita responder dos veces la misma pregunta (sumaría puntos duplicados)
+    ya_respondida = db.query(RespuestaCandicato).filter(
+        RespuestaCandicato.id_evaluacion == id_evaluacion,
+        RespuestaCandicato.id_nodo == id_nodo,
+    ).first()
+    if ya_respondida:
+        pendiente = obtener_pregunta_pendiente(db, evaluacion)
+        if not pendiente:
+            return {"estado": "duplicada"}
+        probabilidades = calcular_probabilidades(
+            _calcular_puntajes_acumulados(db, id_evaluacion)
+        )
+        return {
+            "estado": "continuar",
+            "probabilidades": probabilidades,
+            "siguiente_nodo": pendiente,
+            "metricas_auditoria": _build_metricas(evaluacion, probabilidades, {"rastros": []}),
+        }
+
     # Procesar texto con motor NLP
     resultado_nlp = analizar_texto(texto)
  
@@ -185,6 +243,7 @@ def procesar_respuesta(
         ).first()
         if nodo_cierre and nodo_cierre.id_nodo not in nodos_visitados:
             evaluacion.estado = "en_curso"
+            evaluacion.id_nodo_actual = nodo_cierre.id_nodo
             db.commit()
             return {
                 "estado": "continuar",
@@ -205,8 +264,11 @@ def procesar_respuesta(
         return _cerrar_evaluacion(db, evaluacion, perfil_max, probabilidades)
  
     evaluacion.estado = "en_curso"
+    # Se guarda la pregunta pendiente para retomar exactamente aquí
+    # si el candidato recarga la página o vuelve a iniciar sesión.
+    evaluacion.id_nodo_actual = siguiente
     db.commit()
- 
+
     siguiente_data = grafo.nodes[siguiente]
     return {
         "estado": "continuar",

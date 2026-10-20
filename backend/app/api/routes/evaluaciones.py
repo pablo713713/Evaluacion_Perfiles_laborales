@@ -4,7 +4,8 @@ from pydantic import BaseModel
 from app.infraestructure.db.database import get_db
 from app.infraestructure.security.dependencies import require_psicologo, require_candidato
 from app.application.evaluacion_service import (
-    crear_evaluacion, obtener_primera_pregunta, procesar_respuesta
+    crear_evaluacion, obtener_primera_pregunta, procesar_respuesta,
+    obtener_pregunta_pendiente,
 )
 from app.infraestructure.db.models.evaluacion import Evaluacion
 from app.domain.nlp.motor_cat import construir_grafo, obtener_nodo_raiz
@@ -35,7 +36,7 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
     """
     Retorna el estado actual de la evaluación del candidato.
     - completada / inconclusa → estado: "completada"
-    - pendiente / en_curso    → estado: "continuar" con la pregunta actual
+    - pendiente / en_curso    → estado: "continuar" con la pregunta pendiente
     - sin evaluación          → crea una nueva automáticamente
     """
     ev = (
@@ -53,10 +54,6 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
         return {"id_evaluacion": ev.id_evaluacion, "estado": "sesion_expirada"}
 
     # Sin evaluación o en estado inesperado → crear nueva
-    if not ev or ev.estado not in ("pendiente", "en_curso"):
-        from app.infraestructure.db.models.usuario import Usuario
-        from app.infraestructure.db.models.rol import Rol
-            # Sin evaluación o en estado inesperado → crear nueva
     if not ev or ev.estado not in ("pendiente", "en_curso"):
         from app.infraestructure.db.models.usuario import Usuario
         from app.infraestructure.db.models.rol import Rol
@@ -80,35 +77,16 @@ def mi_evaluacion_pendiente(db: Session = Depends(get_db), candidato=Depends(req
             )
         ev = crear_evaluacion(db, candidato.id_usuario, psicologo_default.id_usuario)
 
-    # Construir grafo y determinar pregunta actual
-    grafo = construir_grafo(db)
+    # Pregunta pendiente (id_nodo_actual, raíz o recalculada por el motor CAT)
+    pregunta = obtener_pregunta_pendiente(db, ev)
+    if not pregunta:
+        raise HTTPException(status_code=409, detail="No hay preguntas disponibles para esta evaluación")
 
-    # Recargar respuestas frescas desde BD (evita caché de SQLAlchemy)
-    from app.infraestructure.db.models.respuesta_candidato import RespuestaCandicato
-    respuestas_frescas = (
-        db.query(RespuestaCandicato)
-        .filter(RespuestaCandicato.id_evaluacion == ev.id_evaluacion)
-        .order_by(RespuestaCandicato.fecha_hora.desc())
-        .all()
-    )
-
-    if not respuestas_frescas:
-        nodo_id = obtener_nodo_raiz(grafo)
-        if not nodo_id:
-            raise HTTPException(status_code=500, detail="No hay pregunta raíz configurada")
-    else:
-        ultima_respuesta = respuestas_frescas[0]
-        nodo_id = ultima_respuesta.id_nodo
-        if nodo_id not in grafo.nodes:
-            raise HTTPException(status_code=500, detail="Nodo de evaluación inconsistente")
-
-    data = grafo.nodes[nodo_id]
     return {
         "id_evaluacion": ev.id_evaluacion,
         "estado": "continuar",
-        "pregunta_actual": {"id_nodo": nodo_id, "texto_pregunta": data["texto"]},
+        "pregunta_actual": pregunta,
     }
-
 
 @router.post("/{id_evaluacion}/responder")
 def responder(id_evaluacion: int, body: RespuestaBody,
