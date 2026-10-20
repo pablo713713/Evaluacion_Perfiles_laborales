@@ -25,6 +25,15 @@ from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 UMBRAL_PREGUNTA_CIERRE = 0.70
 # Porcentaje mínimo del espectro líder para cerrar la evaluación (punto 5)
 PORCENTAJE_MINIMO_ESPECTRO = 0.60
+
+# Estados en los que la evaluación ya no acepta respuestas
+ESTADOS_FINALES = ("completada", "incompleta", "invalida", "inconclusa_evasion")
+
+# Columnas reales del modelo: cualquier clave extra que devuelva el
+# procesador NLP se descarta en vez de romper el constructor del ORM.
+_COLUMNAS_RASTRO = {
+    c.key for c in RastroAuditoriaNLP.__table__.columns
+} - {"id_rastro", "id_respuesta"}
  
  
 def crear_evaluacion(db: Session, id_candidato: int, id_psicologo: int) -> Evaluacion:
@@ -75,7 +84,14 @@ def procesar_respuesta(
     evaluacion = db.query(Evaluacion).filter(
         Evaluacion.id_evaluacion == id_evaluacion
     ).first()
- 
+
+    if evaluacion is None:
+        return {"estado": "no_encontrada"}
+
+    # Una evaluación cerrada no debe seguir sumando respuestas
+    if evaluacion.estado in ESTADOS_FINALES:
+        return {"estado": evaluacion.estado}
+
     # RN-03: verificar expiración de sesión
     if evaluacion.fecha_expiracion_token and datetime.utcnow() > evaluacion.fecha_expiracion_token:
         evaluacion.estado = "invalida"
@@ -108,7 +124,7 @@ def procesar_respuesta(
     for rastro in resultado_nlp["rastros"]:
         registro = RastroAuditoriaNLP(
             id_respuesta=respuesta.id_respuesta,
-            **rastro,
+            **_normalizar_rastro(rastro),
         )
         db.add(registro)
     # La sesión usa autoflush=False: sin este flush, las consultas siguientes
@@ -150,7 +166,14 @@ def procesar_respuesta(
  
     # Seleccionar siguiente nodo adaptativo
     grafo = construir_grafo(db)
-    nodos_visitados = [r.id_nodo for r in evaluacion.respuestas]
+    # Se consulta la BD en lugar de evaluacion.respuestas: la relación puede
+    # estar cacheada y no incluir la respuesta recién insertada con flush().
+    nodos_visitados = [
+        fila.id_nodo
+        for fila in db.query(RespuestaCandicato.id_nodo).filter(
+            RespuestaCandicato.id_evaluacion == id_evaluacion
+        ).all()
+    ]
  
     # Punto 1 — inyectar pregunta cierre cuando certeza supera 0.70
     # Se inyecta UNA sola vez, como penúltima pregunta antes del cierre definitivo
@@ -196,7 +219,21 @@ def procesar_respuesta(
 # ------------------------------------------------------------------
 # Funciones privadas de soporte
 # ------------------------------------------------------------------
- 
+
+def _normalizar_rastro(rastro: dict) -> dict:
+    """
+    Adapta el rastro del procesador NLP a las columnas del modelo.
+    - Descarta claves que no existen como columna (evita TypeError).
+    - Sincroniza tiene_negacion y negacion_detectada: si el procesador
+      envía cualquiera de las dos, ambas quedan con el mismo valor.
+    """
+    negacion = bool(rastro.get("negacion_detectada") or rastro.get("tiene_negacion"))
+    datos = {k: v for k, v in rastro.items() if k in _COLUMNAS_RASTRO}
+    datos["tiene_negacion"] = negacion
+    datos["negacion_detectada"] = negacion
+    return datos
+
+
 def _cerrar_evaluacion(
     db: Session,
     evaluacion: Evaluacion,

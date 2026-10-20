@@ -2,8 +2,10 @@ from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey
 from sqlalchemy.orm import relationship
 from app.infraestructure.db.database import Base
 
+
 class RastroAuditoriaNLP(Base):
     __tablename__ = "rastro_auditoria_nlp"
+
     id_rastro                = Column(Integer, primary_key=True, index=True)
     id_respuesta             = Column(Integer, ForeignKey("respuesta_candidato.id_respuesta", ondelete="CASCADE"), nullable=False)
     palabra_o_frase_extraida = Column(String(200), nullable=False)
@@ -12,8 +14,15 @@ class RastroAuditoriaNLP(Base):
     pos_tag                  = Column(String(20),  nullable=True)
     perfil_asignado          = Column(String(20),  nullable=False)
     puntos_sumados           = Column(Float, default=0.0)
+
+    # Ambas columnas existen en la tabla y se mantienen sincronizadas
+    # desde evaluacion_service (_normalizar_rastro) para que cualquier
+    # consumidor (panel, reportes) lea el mismo valor.
     tiene_negacion           = Column(Boolean, default=False)
+    negacion_detectada       = Column(Boolean, default=False)
+
     # Columnas de corrección clínica manual
     origen                   = Column(String(15), default="automatico")  # automatico | manual
     editado_por_psicologo    = Column(Boolean, default=False)
+
     respuesta                = relationship("RespuestaCandicato", back_populates="rastros")
