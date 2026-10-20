@@ -139,6 +139,33 @@ def calcular_probabilidades(puntajes: dict) -> dict:
     }
 
 
+def calcular_margen(probabilidades: dict) -> tuple[str | None, float]:
+    """
+    Retorna el perfil líder y su ventaja sobre el segundo perfil.
+    Ej: {"Dominante": 0.57, "Hibrido": 0.28, "Sumiso": 0.15} → ("Dominante", 0.29)
+    """
+    if not probabilidades:
+        return None, 0.0
+    ordenados = sorted(probabilidades.items(), key=lambda x: x[1], reverse=True)
+    lider, p1 = ordenados[0]
+    p2 = ordenados[1][1] if len(ordenados) > 1 else 0.0
+    return lider, round(p1 - p2, 4)
+
+
+def verificar_margen(probabilidades: dict, margen_minimo: float) -> str | None:
+    """
+    Criterio de cierre por separación entre perfiles en competencia.
+    La proporción de puntos de cada perfil se estabiliza con la evidencia,
+    por lo que no sirve como certeza absoluta; en cambio, la distancia entre
+    el perfil líder y su competidor más cercano indica cuánta incertidumbre
+    queda por resolver. Retorna el perfil líder si la supera, None si no.
+    """
+    lider, margen = calcular_margen(probabilidades)
+    if lider and margen >= margen_minimo:
+        return lider
+    return None
+
+
 def verificar_umbral(probabilidades: dict, umbral: float) -> str | None:
     """
     Verifica si algún perfil superó el umbral de confianza.

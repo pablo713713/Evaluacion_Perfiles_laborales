@@ -17,15 +17,14 @@ from app.infraestructure.db.models.rastro_auditoria import RastroAuditoriaNLP
 from app.domain.nlp.procesador import analizar_texto
 from app.domain.nlp.motor_cat import (
     construir_grafo, obtener_nodo_raiz,
-    seleccionar_siguiente_nodo, calcular_probabilidades, verificar_umbral,
+    seleccionar_siguiente_nodo, calcular_probabilidades,
+    calcular_margen, verificar_margen,
 )
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 
-
 # Umbral para activar la pregunta de cierre reflexiva (punto 1)
-UMBRAL_PREGUNTA_CIERRE = 0.70
-# Porcentaje mínimo del espectro líder para cerrar la evaluación (punto 5)
-PORCENTAJE_MINIMO_ESPECTRO = 0.60
+# Se inyecta cuando el margen ya está cerca del corte (80% del margen mínimo)
+FACTOR_PREGUNTA_CIERRE = 0.80
 
 # Estados en los que la evaluación ya no acepta respuestas
 ESTADOS_FINALES = ("completada", "incompleta", "invalida", "inconclusa_evasion")
@@ -117,7 +116,7 @@ def procesar_respuesta(
     2. Procesa con motor NLP determinista
     3. Persiste respuesta y rastro de auditoría
     4. Recalcula probabilidades acumuladas desde la BD
-    5. Verifica umbral de certeza (solo si hay mínimo de evidencia)
+    5. Verifica el margen entre los dos perfiles líderes (solo si hay mínimo de evidencia)
     6. Selecciona siguiente nodo o cierra la evaluación
     """
     evaluacion = db.query(Evaluacion).filter(
@@ -200,25 +199,20 @@ def procesar_respuesta(
     puntajes_acumulados = _calcular_puntajes_acumulados(db, id_evaluacion)
     probabilidades = calcular_probabilidades(puntajes_acumulados)
  
-    # RN-02: verificar umbral solo si hay suficiente evidencia
+    # RN-02: verificar el criterio de cierre solo si hay suficiente evidencia
     cantidad_validas = db.query(RespuestaCandicato).filter(
         RespuestaCandicato.id_evaluacion == id_evaluacion,
         RespuestaCandicato.es_valida == True,
     ).count()
- 
+
     perfil_ganador = None
- 
+
     if cantidad_validas >= settings.MIN_NODOS_REQUERIDOS:
-        perfil_candidato = verificar_umbral(probabilidades, evaluacion.umbral_configurado)
- 
-        # Punto 5 — doble condicional: certeza suficiente Y espectro líder ≥ 60%
-        if perfil_candidato:
-            porcentaje_lider = probabilidades.get(perfil_candidato, 0.0)
-            if porcentaje_lider >= PORCENTAJE_MINIMO_ESPECTRO:
-                perfil_ganador = perfil_candidato
-            # Si la certeza llegó pero el espectro líder < 60%, continuamos
-            # recabando evidencia — no cerramos todavía
- 
+        # Cierre por margen: el perfil líder debe separarse del segundo
+        # en al menos MARGEN_MINIMO_CIERRE. Si los dos primeros siguen
+        # parejos, el test continúa recabando evidencia.
+        perfil_ganador = verificar_margen(probabilidades, settings.MARGEN_MINIMO_CIERRE)
+
     if perfil_ganador:
         return _cerrar_evaluacion(db, evaluacion, perfil_ganador, probabilidades)
  
@@ -233,10 +227,10 @@ def procesar_respuesta(
         ).all()
     ]
  
-    # Punto 1 — inyectar pregunta cierre cuando certeza supera 0.70
+    # Punto 1 — inyectar pregunta cierre cuando el margen se acerca al corte
     # Se inyecta UNA sola vez, como penúltima pregunta antes del cierre definitivo
-    certeza_actual = max(probabilidades.values()) if probabilidades else 0.0
-    if certeza_actual >= UMBRAL_PREGUNTA_CIERRE:
+    _, margen_actual = calcular_margen(probabilidades)
+    if margen_actual >= settings.MARGEN_MINIMO_CIERRE * FACTOR_PREGUNTA_CIERRE:
         nodo_cierre = db.query(NodoPregunta).filter(
             NodoPregunta.es_cierre == True,
             NodoPregunta.estado_activo == True,
@@ -365,6 +359,7 @@ def _build_metricas(evaluacion, probabilidades: dict, resultado_nlp: dict) -> di
     """Construye el bloque de métricas de auditoría para el frontend."""
     espectro_lider = max(probabilidades, key=probabilidades.get) if probabilidades else "Indefinido"
     puntaje_lider = probabilidades.get(espectro_lider, 0.0)
+    _, margen_actual = calcular_margen(probabilidades)
     tokens_detectados = [
         rastro.get("palabra_o_frase_extraida") or str(rastro)
         for rastro in resultado_nlp.get("rastros", [])
@@ -372,7 +367,10 @@ def _build_metricas(evaluacion, probabilidades: dict, resultado_nlp: dict) -> di
     return {
         "espectro_dominante": espectro_lider,
         "puntaje_acumulado": float(puntaje_lider),
-        "umbral_corte": float(evaluacion.umbral_configurado or 1.0),
+        # Se mantiene la clave umbral_corte para no romper el frontend,
+        # pero ahora contiene el margen mínimo de cierre.
+        "umbral_corte": float(settings.MARGEN_MINIMO_CIERRE),
+        "margen_actual": float(margen_actual),
         "palabras_clave_detectadas": tokens_detectados,
     }
  
