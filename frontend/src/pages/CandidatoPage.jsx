@@ -10,7 +10,8 @@ function CandidatoPage() {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [estado, setEstado] = useState('cargando')
-  const [metricas, setMetricas] = useState(null)
+  // Barrera psicológica: el candidato no ve métricas de la evaluación
+  // const [metricas, setMetricas] = useState(null)
 
   const idEvaluacion = useRef(null)
   const tiempoInicio = useRef(Date.now())
@@ -51,7 +52,7 @@ function CandidatoPage() {
       const res = await api.get('/api/evaluaciones/mi-evaluacion')
       const data = res.data
 
-      if (data.estado === 'completada') {
+      if (data.estado === 'completada' || data.estado === 'inconclusa_evasion') {
         setEstado('completado')
         return
       }
@@ -62,7 +63,7 @@ function CandidatoPage() {
 
       idEvaluacion.current = data.id_evaluacion
       setPreguntaActual(data.pregunta_actual)
-      if (data.metricas_auditoria) setMetricas(data.metricas_auditoria)
+      // if (data.metricas_auditoria) setMetricas(data.metricas_auditoria)
       setEstado('activo')
     } catch {
       setEstado('error')
@@ -79,7 +80,7 @@ function CandidatoPage() {
         if (intervaloRef.current) clearInterval(intervaloRef.current)
         idEvaluacion.current = data.id_evaluacion
         setPreguntaActual(data.pregunta_actual)
-        setMetricas(null)
+        // setMetricas(null)
         setNumeroPregunta(1)
         setRespuesta('')
         tiempoInicio.current = Date.now()
@@ -120,12 +121,13 @@ function CandidatoPage() {
         setEstado('expirado')
         return
       }
-      if (resultado.estado === 'completada') {
+      // 'inconclusa_evasion': el candidato ve la misma pantalla de cierre (no se le informa el motivo)
+      if (resultado.estado === 'completada' || resultado.estado === 'inconclusa_evasion') {
         setEstado('completado')
         return
       }
 
-      if (resultado.metricas_auditoria) setMetricas(resultado.metricas_auditoria)
+      // if (resultado.metricas_auditoria) setMetricas(resultado.metricas_auditoria)
 
       setPreguntaActual(resultado.siguiente_nodo)
       setNumeroPregunta((n) => n + 1)
@@ -226,7 +228,8 @@ function CandidatoPage() {
           error={error}
         />
 
-        {/* Panel de pruebas del motor psicométrico */}
+        {/* ── Panel de pruebas del motor psicométrico (desactivado: barrera psicológica) ──
+        Panel de pruebas del motor psicométrico
         <div className="mt-10 border-t border-dashed border-gray-200 pt-6">
           <div className="flex items-center justify-between mb-4">
             <span className="text-xs font-bold uppercase tracking-wider text-[#0f3846] bg-[#fef08a] px-2.5 py-1 rounded border border-[#fef08a]">
@@ -294,6 +297,7 @@ function CandidatoPage() {
             </div>
           )}
         </div>
+        */}
 
       </div>
     </div>
