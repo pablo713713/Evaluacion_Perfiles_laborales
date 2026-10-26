@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import api from '../../services/api'
+import { etiquetaPerfil } from '../../utils/perfiles'
 
 const PERFIL_COLORES = {
   Dominante: 'bg-red-50 text-red-700',
@@ -71,7 +72,7 @@ function NodoForm({ nodo, onGuardar, onCancelar }) {
             />
           </div>
           <div>
-            <label className="block text-xs text-blue-500 mb-1">Peso Híbrido</label>
+            <label className="block text-xs text-blue-500 mb-1">Peso Móvil</label>
             <input
               type="number"
               step="0.01"
@@ -83,7 +84,7 @@ function NodoForm({ nodo, onGuardar, onCancelar }) {
             />
           </div>
           <div>
-            <label className="block text-xs text-green-500 mb-1">Peso Sumiso</label>
+            <label className="block text-xs text-green-500 mb-1">Peso Consecuente</label>
             <input
               type="number"
               step="0.01"
@@ -258,14 +259,14 @@ function BancoPreguntas() {
                       </span>
                     )}
                     <span className={`px-2 py-0.5 text-xs rounded ${PERFIL_COLORES[perfilPredominante(nodo)]}`}>
-                      {perfilPredominante(nodo)}
+                      {etiquetaPerfil(perfilPredominante(nodo))}
                     </span>
                   </div>
                   <p className="text-sm text-gray-700 leading-relaxed">{nodo.texto_pregunta}</p>
                   <div className="flex gap-4 mt-3">
                     <span className="text-xs text-red-500">D: {nodo.peso_dominante}</span>
-                    <span className="text-xs text-blue-500">H: {nodo.peso_hibrido}</span>
-                    <span className="text-xs text-green-500">S: {nodo.peso_sumiso}</span>
+                    <span className="text-xs text-blue-500">M: {nodo.peso_hibrido}</span>
+                    <span className="text-xs text-green-500">C: {nodo.peso_sumiso}</span>
                   </div>
                 </div>
                 <div className="flex gap-2 shrink-0">
