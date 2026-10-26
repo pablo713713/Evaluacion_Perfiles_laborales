@@ -10,6 +10,7 @@ function CandidatoPage() {
   const [enviando, setEnviando] = useState(false)
   const [error, setError] = useState('')
   const [estado, setEstado] = useState('cargando')
+  const [modalidad, setModalidad] = useState('texto') // 'texto' | 'voz' | 'mixta'
   // Barrera psicológica: el candidato no ve métricas de la evaluación
   // const [metricas, setMetricas] = useState(null)
 
@@ -108,6 +109,7 @@ function CandidatoPage() {
         id_nodo: preguntaActual.id_nodo,
         texto: respuesta,
         tiempo_segundos: tiempoSegundos,
+        modalidad,
       })
 
       const resultado = res.data
@@ -226,6 +228,7 @@ function CandidatoPage() {
           onSubmit={enviarRespuesta}
           enviando={enviando}
           error={error}
+          onModalidad={setModalidad}
         />
 
         {/* ── Panel de pruebas del motor psicométrico (desactivado: barrera psicológica) ──

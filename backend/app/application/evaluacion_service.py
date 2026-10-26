@@ -21,6 +21,7 @@ from app.domain.nlp.motor_cat import (
     calcular_margen, verificar_margen,
 )
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
+from app.infraestructure.repositories import lexico_repo
 
 # Umbral para activar la pregunta de cierre reflexiva (punto 1)
 # Se inyecta cuando el margen ya está cerca del corte (80% del margen mínimo)
@@ -108,7 +109,8 @@ def procesar_respuesta(
     id_evaluacion: int,
     id_nodo: int,
     texto: str,
-    tiempo: int
+    tiempo: int,
+    modalidad: str = "texto",
 ) -> dict:
     """
     Ciclo principal del sistema:
@@ -155,8 +157,13 @@ def procesar_respuesta(
             "metricas_auditoria": _build_metricas(evaluacion, probabilidades, {"rastros": []}),
         }
 
-    # Procesar texto con motor NLP
-    resultado_nlp = analizar_texto(texto)
+    # Cargar el lexicón activo desde la BD (lo administra el Psicólogo Líder)
+    # y procesar el texto con el motor NLP. El dominio recibe el lexicón como
+    # dato, así sigue sin acceder a la base de datos.
+    lexico, lemas_ambiguos = lexico_repo.obtener_lexico_activo(db)
+    if not lexico:
+        raise RuntimeError("El lexicón conductual está vacío: ejecute lexico_conductual.sql en la base de datos.")
+    resultado_nlp = analizar_texto(texto, lexico, lemas_ambiguos)
  
     # RN-01: respuesta muy corta
     if not resultado_nlp["es_valida"]:
@@ -173,6 +180,7 @@ def procesar_respuesta(
         tiempo_demorado=tiempo,
         conteo_palabras=resultado_nlp["conteo_palabras"],
         es_valida=resultado_nlp["es_valida"],
+        modalidad=modalidad,  # 'texto' | 'voz' | 'mixta'
     )
     db.add(respuesta)
     db.flush()

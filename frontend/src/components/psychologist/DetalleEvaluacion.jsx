@@ -1,406 +1,265 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import api from '../../services/api'
+import {
+  PERFILES, etiquetaPerfil, COLOR_PERFIL_BG, COLOR_PERFIL_TEXT, COLOR_MANUAL, COLOR_ALERTA, PALETA,
+  calcularPolaridad, reconstruirAlertas, formatoFechaHora,
+} from '../../utils/perfiles'
+import { construirGraficas } from './Graficos'
 
-const PERFIL_COLOR_BG = {
-  Dominante: '#FEE2E2',
-  Hibrido:   '#DBEAFE',
-  Sumiso:    '#D1FAE5',
-  manual:    '#FEF9C3',
-  alerta:    '#EDE9FE',
-}
-const PERFIL_COLOR_TEXT = {
-  Dominante: '#991B1B',
-  Hibrido:   '#1E40AF',
-  Sumiso:    '#065F46',
-  manual:    '#713F12',
-  alerta:    '#5B21B6',
-}
-const PERFIL_COLOR_PIE = {
-  Dominante: '#EF4444',
-  Hibrido:   '#3B82F6',
-  Sumiso:    '#10B981',
-}
-const COLOR_ALERTA_BG   = '#EDE9FE'
-const COLOR_ALERTA_TEXT = '#5B21B6'
-const COLOR_ALERTA_BAR  = '#7C3AED'
+// ── Estilos comunes ──────────────────────────────────────────────────────────
+const INPUT = 'w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-[#1e5263]'
+const BTN_SEC = 'flex-1 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50'
+const BTN_PRI = 'flex-1 px-3 py-1.5 text-sm text-[#0f3846] font-semibold bg-[#fef08a] rounded-lg hover:bg-[#fef9c3] disabled:opacity-50'
 
-// ── Gráfico de torta SVG ─────────────────────────────────────────────────────
-function GraficoTorta({ dominante, hibrido, sumiso }) {
-  const datos = [
-    { perfil: 'Dominante', valor: dominante, color: PERFIL_COLOR_PIE.Dominante },
-    { perfil: 'Híbrido',   valor: hibrido,   color: PERFIL_COLOR_PIE.Hibrido },
-    { perfil: 'Sumiso',    valor: sumiso,     color: PERFIL_COLOR_PIE.Sumiso },
-  ]
-  const total = dominante + hibrido + sumiso
-  if (total === 0) return null
-
-  let startAngle = -Math.PI / 2
-  const slices = datos.map(d => {
-    const angle = (d.valor / total) * 2 * Math.PI
-    const x1 = 80 + 70 * Math.cos(startAngle)
-    const y1 = 80 + 70 * Math.sin(startAngle)
-    startAngle += angle
-    const x2 = 80 + 70 * Math.cos(startAngle)
-    const y2 = 80 + 70 * Math.sin(startAngle)
-    const large = angle > Math.PI ? 1 : 0
-    const path = `M80,80 L${x1},${y1} A70,70 0 ${large},1 ${x2},${y2} Z`
-    return { ...d, path }
-  })
-
+function Modal({ children, borde }) {
   return (
-    <div className="flex items-center gap-8">
-      <svg width="160" height="160" viewBox="0 0 160 160">
-        {slices.map((s, i) => (
-          <path key={i} d={s.path} fill={s.color} stroke="white" strokeWidth="2" />
-        ))}
-      </svg>
-      <div className="space-y-2">
-        {datos.map(d => (
-          <div key={d.perfil} className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }} />
-            <span className="text-sm text-gray-700">{d.perfil}</span>
-            <span className="text-sm font-semibold text-gray-900 ml-2">
-              {total > 0 ? ((d.valor / total) * 100).toFixed(1) : 0}%
-            </span>
-          </div>
-        ))}
+    <div
+      data-tooltip="true"
+      className="fixed z-50 bg-white rounded-xl shadow-2xl p-4 w-80"
+      style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)', border: `1.5px solid ${borde || '#E5E7EB'}` }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {children}
+    </div>
+  )
+}
+
+function CabeceraModal({ titulo, color, onCerrar }) {
+  return (
+    <div className="flex items-center justify-between mb-3">
+      <span className="text-xs font-semibold uppercase tracking-wide" style={{ color }}>{titulo}</span>
+      <button onClick={onCerrar} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
+    </div>
+  )
+}
+
+function SelectorPerfil({ value, onChange }) {
+  return (
+    <select value={value} onChange={(e) => onChange(e.target.value)} className={INPUT}>
+      {PERFILES.map((p) => <option key={p} value={p}>{etiquetaPerfil(p)}</option>)}
+    </select>
+  )
+}
+
+// Formulario para crear una alerta (desde un rastro o desde texto seleccionado)
+function FormAlerta({ texto, onVolver, onGuardar }) {
+  const [etiqueta, setEtiqueta] = useState('')
+  const [peso, setPeso] = useState(0.5)
+  return (
+    <div className="space-y-3">
+      <div className="rounded-lg p-2" style={{ backgroundColor: COLOR_ALERTA.bg }}>
+        <p className="text-xs mb-1" style={{ color: COLOR_ALERTA.text }}>Texto marcado</p>
+        <p className="text-sm font-medium" style={{ color: COLOR_ALERTA.text }}>"{texto}"</p>
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 mb-1">Tipo de alerta</p>
+        <input autoFocus value={etiqueta} onChange={(e) => setEtiqueta(e.target.value)}
+          placeholder="ej. narcisismo, impulsividad…" className={INPUT} style={{ borderColor: COLOR_ALERTA.barra }} />
+      </div>
+      <div>
+        <p className="text-xs text-gray-500 mb-1">Peso <span className="text-gray-400">(0.1 – 1.0)</span></p>
+        <input type="number" step="0.05" min="0.1" max="1" value={peso} onChange={(e) => setPeso(e.target.value)}
+          className={INPUT} style={{ borderColor: COLOR_ALERTA.barra }} />
+      </div>
+      <div className="flex gap-2 pt-1">
+        <button onClick={onVolver} className={BTN_SEC}>← Volver</button>
+        <button
+          disabled={!etiqueta.trim()}
+          onClick={() => onGuardar(etiqueta.trim(), Math.min(1, Math.max(0.1, parseFloat(peso) || 0.5)))}
+          className="flex-1 px-3 py-1.5 text-sm text-white rounded-lg disabled:opacity-40"
+          style={{ backgroundColor: COLOR_ALERTA.barra }}
+        >
+          Agregar alerta
+        </button>
       </div>
     </div>
   )
 }
 
-// ── Tooltip editable (para rastros existentes y manuales) ────────────────────
-function TooltipEditable({ token, posicion, onGuardar, onCancelar, onGuardarAlerta }) {
-  const [perfil, setPerfil]         = useState(token.perfil)
-  const [puntos, setPuntos]         = useState(Math.abs(token.puntos))
-  const [guardando, setGuardando]   = useState(false)
+function BotonAgregarAlerta({ onClick }) {
+  return (
+    <button onClick={onClick} className="w-full px-3 py-1.5 text-xs rounded-lg border font-medium"
+      style={{ borderColor: COLOR_ALERTA.barra, color: COLOR_ALERTA.text, backgroundColor: COLOR_ALERTA.bg }}>
+      ▲ Agregar alerta
+    </button>
+  )
+}
+
+// ── Editar un rastro automático o manual ─────────────────────────────────────
+function TooltipEditable({ token, onGuardar, onCancelar, onGuardarAlerta }) {
+  const [perfil, setPerfil] = useState(token.perfil)
+  const [puntos, setPuntos] = useState(Math.abs(token.puntos))
+  const [guardando, setGuardando] = useState(false)
   const [modoAlerta, setModoAlerta] = useState(false)
-  const [etiqueta, setEtiqueta]     = useState('')
-  const [pesoAlerta, setPesoAlerta] = useState(0.5)
-
-  const handleGuardar = async () => {
-    setGuardando(true)
-    await onGuardar(token.id_rastro, perfil, parseFloat(puntos))
-    setGuardando(false)
-  }
-
-  const handleGuardarAlerta = () => {
-    if (!etiqueta.trim()) return
-    const peso = Math.min(1.0, Math.max(0.1, parseFloat(pesoAlerta) || 0.5))
-    onGuardarAlerta({
-      etiqueta:    etiqueta.trim(),
-      peso,
-      palabra:     token.palabra,
-      idRastro:    token.id_rastro,
-      idRespuesta: token.id_respuesta,
-    })
-    onCancelar()
-  }
+  const esManual = token.origen === 'manual'
 
   return (
-    <div
-      data-tooltip="true"
-      className="fixed z-50 bg-white border border-gray-200 rounded-xl shadow-2xl p-4 w-80"
-      style={{ top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}
-      onClick={e => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium uppercase tracking-wide"
-          style={{ color: modoAlerta ? COLOR_ALERTA_TEXT : '#6B7280' }}>
-          {modoAlerta ? '⚠ Agregar alerta' : (token.origen === 'manual' ? 'Rastro manual' : 'Editar rastro')}
-        </span>
-        <button onClick={onCancelar} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
-      </div>
-
-      {!modoAlerta ? (
+    <Modal borde={modoAlerta ? COLOR_ALERTA.barra : esManual ? COLOR_MANUAL.borde : '#E5E7EB'}>
+      <CabeceraModal
+        titulo={modoAlerta ? '▲ Agregar alerta' : esManual ? 'Rastro manual' : 'Editar rastro'}
+        color={modoAlerta ? COLOR_ALERTA.text : esManual ? COLOR_MANUAL.text : '#6B7280'}
+        onCerrar={onCancelar}
+      />
+      {modoAlerta ? (
+        <FormAlerta
+          texto={token.palabra}
+          onVolver={() => setModoAlerta(false)}
+          onGuardar={(etiqueta, peso) => {
+            onGuardarAlerta({ etiqueta, peso, palabra: token.palabra, idRastro: token.id_rastro, idRespuesta: token.id_respuesta })
+            onCancelar()
+          }}
+        />
+      ) : (
         <div className="space-y-3">
           <div>
             <p className="text-xs text-gray-500 mb-1">Texto</p>
             <p className="text-sm font-medium text-gray-800">"{token.palabra}"</p>
           </div>
-
-          {token.lema && token.origen !== 'manual' && (
+          {token.lema && !esManual && (
             <div>
               <p className="text-xs text-gray-500 mb-1">Lema detectado</p>
               <p className="text-sm text-gray-700">{token.lema}</p>
             </div>
           )}
-
           <div>
             <p className="text-xs text-gray-500 mb-1">Espectro</p>
-            <select
-              value={perfil}
-              onChange={e => setPerfil(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-gray-400"
-            >
-              <option value="Dominante">Dominante</option>
-              <option value="Hibrido">Híbrido</option>
-              <option value="Sumiso">Sumiso</option>
-            </select>
+            <SelectorPerfil value={perfil} onChange={setPerfil} />
           </div>
-
           <div>
             <p className="text-xs text-gray-500 mb-1">Puntos</p>
-            <input
-              type="number"
-              step="0.05"
-              min="0"
-              max="1"
-              value={puntos}
-              onChange={e => setPuntos(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-gray-400"
-            />
+            <input type="number" step="0.05" min="0" max="1" value={puntos} onChange={(e) => setPuntos(e.target.value)} className={INPUT} />
           </div>
-
-          {/* Botón Agregar alerta */}
-          <button
-            onClick={() => setModoAlerta(true)}
-            className="w-full px-3 py-1.5 text-xs rounded-lg border transition-colors"
-            style={{ borderColor: COLOR_ALERTA_BAR, color: COLOR_ALERTA_TEXT, backgroundColor: COLOR_ALERTA_BG }}
-          >
-            ⚠ Agregar alerta
-          </button>
-
+          <BotonAgregarAlerta onClick={() => setModoAlerta(true)} />
           <div className="flex gap-2 pt-1">
+            <button onClick={onCancelar} className={BTN_SEC}>Cancelar</button>
             <button
-              onClick={onCancelar}
-              className="flex-1 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleGuardar}
               disabled={guardando}
-              className="flex-1 px-3 py-1.5 text-sm text-white bg-gray-800 rounded-lg hover:bg-gray-700 disabled:opacity-50"
+              onClick={async () => { setGuardando(true); await onGuardar(token.id_rastro, perfil, parseFloat(puntos)); setGuardando(false) }}
+              className={BTN_PRI}
             >
               {guardando ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="rounded-lg p-2" style={{ backgroundColor: COLOR_ALERTA_BG }}>
-            <p className="text-xs mb-1" style={{ color: COLOR_ALERTA_TEXT }}>Palabra marcada</p>
-            <p className="text-sm font-medium" style={{ color: COLOR_ALERTA_TEXT }}>"{token.palabra}"</p>
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Tipo de alerta</p>
-            <input
-              type="text"
-              placeholder="ej. narcisismo, bipolaridad…"
-              value={etiqueta}
-              onChange={e => setEtiqueta(e.target.value)}
-              className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: COLOR_ALERTA_BAR }}
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500 mb-1">
-              Peso <span className="text-gray-400">(0.1 – 1.0)</span>
-            </p>
-            <input
-              type="number"
-              step="0.05"
-              min="0.1"
-              max="1"
-              value={pesoAlerta}
-              onChange={e => setPesoAlerta(e.target.value)}
-              className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: COLOR_ALERTA_BAR }}
-            />
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={() => setModoAlerta(false)}
-              className="flex-1 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              ← Volver
-            </button>
-            <button
-              onClick={handleGuardarAlerta}
-              disabled={!etiqueta.trim()}
-              className="flex-1 px-3 py-1.5 text-sm text-white rounded-lg disabled:opacity-40"
-              style={{ backgroundColor: COLOR_ALERTA_BAR }}
-            >
-              Agregar alerta
-            </button>
-          </div>
-        </div>
       )}
-    </div>
+    </Modal>
   )
 }
 
-// ── Tooltip de selección libre ───────────────────────────────────────────────
-function TooltipSeleccion({ texto, idRespuesta, posicion, onGuardar, onCancelar, onGuardarAlerta }) {
-  const [perfil, setPerfil]         = useState('Dominante')
-  const [puntos, setPuntos]         = useState(0.5)
-  const [guardando, setGuardando]   = useState(false)
+// ── Crear rastro manual desde texto seleccionado ─────────────────────────────
+function TooltipSeleccion({ texto, idRespuesta, onGuardar, onCancelar, onGuardarAlerta }) {
+  const [perfil, setPerfil] = useState('Dominante')
+  const [puntos, setPuntos] = useState(0.5)
+  const [guardando, setGuardando] = useState(false)
   const [modoAlerta, setModoAlerta] = useState(false)
-  const [etiqueta, setEtiqueta]     = useState('')
-  const [pesoAlerta, setPesoAlerta] = useState(0.5)
-
-  const handleGuardar = async () => {
-    setGuardando(true)
-    await onGuardar(idRespuesta, texto, perfil, parseFloat(puntos))
-    setGuardando(false)
-  }
-
-  const handleGuardarAlerta = () => {
-    if (!etiqueta.trim()) return
-    const peso = Math.min(1.0, Math.max(0.1, parseFloat(pesoAlerta) || 0.5))
-    onGuardarAlerta({
-      etiqueta:    etiqueta.trim(),
-      peso,
-      palabra:     texto,
-      idRastro:    null,
-      idRespuesta: idRespuesta,
-    })
-    onCancelar()
-  }
 
   return (
-    <div
-      data-tooltip="true"
-      className="fixed z-50 bg-white rounded-xl shadow-2xl p-4 w-80"
-      style={{
-        top: '50%', left: '50%', transform: 'translate(-50%, -50%)',
-        border: `1.5px solid ${modoAlerta ? COLOR_ALERTA_BAR : '#FCD34D'}`,
-      }}
-      onClick={e => e.stopPropagation()}
-    >
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium uppercase tracking-wide"
-          style={{ color: modoAlerta ? COLOR_ALERTA_TEXT : '#D97706' }}>
-          {modoAlerta ? '⚠ Agregar alerta' : 'Nuevo rastro manual'}
-        </span>
-        <button onClick={onCancelar} className="text-gray-400 hover:text-gray-600 text-xs">✕</button>
-      </div>
-
-      {!modoAlerta ? (
+    <Modal borde={modoAlerta ? COLOR_ALERTA.barra : COLOR_MANUAL.borde}>
+      <CabeceraModal
+        titulo={modoAlerta ? '▲ Agregar alerta' : 'Nuevo rastro manual'}
+        color={modoAlerta ? COLOR_ALERTA.text : COLOR_MANUAL.text}
+        onCerrar={onCancelar}
+      />
+      {modoAlerta ? (
+        <FormAlerta
+          texto={texto}
+          onVolver={() => setModoAlerta(false)}
+          onGuardar={(etiqueta, peso) => {
+            onGuardarAlerta({ etiqueta, peso, palabra: texto, idRastro: null, idRespuesta })
+            onCancelar()
+          }}
+        />
+      ) : (
         <div className="space-y-3">
           <div>
             <p className="text-xs text-gray-500 mb-1">Texto seleccionado</p>
-            <p className="text-sm font-medium text-gray-800 bg-yellow-50 px-2 py-1 rounded">"{texto}"</p>
+            <p className="text-sm font-medium px-2 py-1 rounded" style={{ backgroundColor: COLOR_MANUAL.bg, color: COLOR_MANUAL.text }}>"{texto}"</p>
           </div>
-
           <div>
             <p className="text-xs text-gray-500 mb-1">Espectro</p>
-            <select
-              value={perfil}
-              onChange={e => setPerfil(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-gray-400"
-            >
-              <option value="Dominante">Dominante</option>
-              <option value="Hibrido">Híbrido</option>
-              <option value="Sumiso">Sumiso</option>
-            </select>
+            <SelectorPerfil value={perfil} onChange={setPerfil} />
           </div>
-
           <div>
             <p className="text-xs text-gray-500 mb-1">Puntos</p>
-            <input
-              type="number"
-              step="0.05"
-              min="0"
-              max="1"
-              value={puntos}
-              onChange={e => setPuntos(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-gray-400"
-            />
+            <input type="number" step="0.05" min="0" max="1" value={puntos} onChange={(e) => setPuntos(e.target.value)} className={INPUT} />
           </div>
-
-          {/* Botón Agregar alerta */}
-          <button
-            onClick={() => setModoAlerta(true)}
-            className="w-full px-3 py-1.5 text-xs rounded-lg border transition-colors"
-            style={{ borderColor: COLOR_ALERTA_BAR, color: COLOR_ALERTA_TEXT, backgroundColor: COLOR_ALERTA_BG }}
-          >
-            ⚠ Agregar alerta
-          </button>
-
+          <BotonAgregarAlerta onClick={() => setModoAlerta(true)} />
           <div className="flex gap-2 pt-1">
+            <button onClick={onCancelar} className={BTN_SEC}>Cancelar</button>
             <button
-              onClick={onCancelar}
-              className="flex-1 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              Cancelar
-            </button>
-            <button
-              onClick={handleGuardar}
               disabled={guardando}
-              className="flex-1 px-3 py-1.5 text-sm text-white bg-yellow-600 rounded-lg hover:bg-yellow-500 disabled:opacity-50"
+              onClick={async () => { setGuardando(true); await onGuardar(idRespuesta, texto, perfil, parseFloat(puntos)); setGuardando(false) }}
+              className="flex-1 px-3 py-1.5 text-sm text-white rounded-lg disabled:opacity-50"
+              style={{ backgroundColor: COLOR_MANUAL.borde }}
             >
               {guardando ? 'Guardando...' : 'Guardar'}
             </button>
           </div>
         </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="rounded-lg p-2" style={{ backgroundColor: COLOR_ALERTA_BG }}>
-            <p className="text-xs mb-1" style={{ color: COLOR_ALERTA_TEXT }}>Texto seleccionado</p>
-            <p className="text-sm font-medium" style={{ color: COLOR_ALERTA_TEXT }}>"{texto}"</p>
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500 mb-1">Tipo de alerta</p>
-            <input
-              type="text"
-              placeholder="ej. narcisismo, bipolaridad…"
-              value={etiqueta}
-              onChange={e => setEtiqueta(e.target.value)}
-              className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: COLOR_ALERTA_BAR }}
-              autoFocus
-            />
-          </div>
-
-          <div>
-            <p className="text-xs text-gray-500 mb-1">
-              Peso <span className="text-gray-400">(0.1 – 1.0)</span>
-            </p>
-            <input
-              type="number"
-              step="0.05"
-              min="0.1"
-              max="1"
-              value={pesoAlerta}
-              onChange={e => setPesoAlerta(e.target.value)}
-              className="w-full border rounded-lg px-3 py-1.5 text-sm focus:outline-none"
-              style={{ borderColor: COLOR_ALERTA_BAR }}
-            />
-          </div>
-
-          <div className="flex gap-2 pt-1">
-            <button
-              onClick={() => setModoAlerta(false)}
-              className="flex-1 px-3 py-1.5 text-sm text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50"
-            >
-              ← Volver
-            </button>
-            <button
-              onClick={handleGuardarAlerta}
-              disabled={!etiqueta.trim()}
-              className="flex-1 px-3 py-1.5 text-sm text-white rounded-lg disabled:opacity-40"
-              style={{ backgroundColor: COLOR_ALERTA_BAR }}
-            >
-              Agregar alerta
-            </button>
-          </div>
-        </div>
       )}
-    </div>
+    </Modal>
   )
 }
 
-// ── Renderiza texto con palabras resaltadas ──────────────────────────────────
-function TextoResaltado({ texto, rastros, onClickToken, onSeleccionTexto, idRespuesta, alertas = [] }) {
-  const contenedorRef = useRef(null)
+// ── Ver / editar / eliminar una alerta (antes no se podía abrir) ─────────────
+function TooltipAlerta({ alerta, onGuardar, onEliminar, onCancelar }) {
+  const [etiqueta, setEtiqueta] = useState(alerta.etiqueta)
+  const [peso, setPeso] = useState(alerta.peso)
+  const [guardando, setGuardando] = useState(false)
+  const [confirmar, setConfirmar] = useState(false)
 
+  return (
+    <Modal borde={COLOR_ALERTA.barra}>
+      <CabeceraModal titulo="▲ Alerta clínica" color={COLOR_ALERTA.text} onCerrar={onCancelar} />
+      <div className="space-y-3">
+        <div className="rounded-lg p-2" style={{ backgroundColor: COLOR_ALERTA.bg }}>
+          <p className="text-xs mb-1" style={{ color: COLOR_ALERTA.text }}>Texto marcado</p>
+          <p className="text-sm font-medium" style={{ color: COLOR_ALERTA.text }}>"{alerta.palabra}"</p>
+        </div>
+        <div>
+          <p className="text-xs text-gray-500 mb-1">Tipo de alerta</p>
+          <input value={etiqueta} onChange={(e) => setEtiqueta(e.target.value)} className={INPUT} style={{ borderColor: COLOR_ALERTA.barra }} />
+        </div>
+        <div>
+          <p className="text-xs text-gray-500 mb-1">Peso <span className="text-gray-400">(0.1 – 1.0)</span></p>
+          <input type="number" step="0.05" min="0.1" max="1" value={peso} onChange={(e) => setPeso(e.target.value)}
+            className={INPUT} style={{ borderColor: COLOR_ALERTA.barra }} />
+        </div>
+        <p className="text-xs text-gray-400">Las alertas no modifican la distribución D / M / C; se muestran aparte en las gráficas y en el informe.</p>
+
+        {confirmar ? (
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setConfirmar(false)} className={BTN_SEC}>No</button>
+            <button onClick={() => onEliminar(alerta.idRastro)} className="flex-1 px-3 py-1.5 text-sm text-white bg-red-500 rounded-lg hover:bg-red-600">
+              Sí, eliminar
+            </button>
+          </div>
+        ) : (
+          <div className="flex gap-2 pt-1">
+            <button onClick={() => setConfirmar(true)} className="px-3 py-1.5 text-sm text-red-500 border border-red-100 rounded-lg hover:bg-red-50">
+              Eliminar
+            </button>
+            <button
+              disabled={guardando || !etiqueta.trim()}
+              onClick={async () => {
+                setGuardando(true)
+                await onGuardar(alerta.idRastro, etiqueta.trim(), Math.min(1, Math.max(0.1, parseFloat(peso) || 0.5)))
+                setGuardando(false)
+              }}
+              className="flex-1 px-3 py-1.5 text-sm text-white rounded-lg disabled:opacity-40"
+              style={{ backgroundColor: COLOR_ALERTA.barra }}
+            >
+              {guardando ? 'Guardando...' : 'Guardar cambios'}
+            </button>
+          </div>
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// ── Texto de la respuesta con palabras resaltadas ────────────────────────────
+function TextoResaltado({ texto, rastros, onClickToken, onClickAlerta, onSeleccionTexto, idRespuesta }) {
   const handleMouseUp = (e) => {
     if (e.target.closest('[data-tooltip]')) return
     setTimeout(() => {
@@ -408,825 +267,502 @@ function TextoResaltado({ texto, rastros, onClickToken, onSeleccionTexto, idResp
       if (!sel || sel.isCollapsed) return
       const textoSel = sel.toString().trim()
       if (!textoSel || textoSel.length < 2) return
-      const range = sel.getRangeAt(0)
-      const rect  = range.getBoundingClientRect()
-      onSeleccionTexto({
-        texto: textoSel,
-        idRespuesta,
-        posicion: {
-          x: Math.min(rect.left, window.innerWidth - 300),
-          y: rect.bottom + window.scrollY + 8,
-        }
-      })
+      onSeleccionTexto({ texto: textoSel, idRespuesta })
       sel.removeAllRanges()
     }, 10)
   }
 
   if (!rastros || rastros.length === 0) {
-    return (
-      <span
-        ref={contenedorRef}
-        className="text-gray-700 text-sm leading-relaxed select-text"
-        onMouseUp={handleMouseUp}
-      >
-        {texto}
-      </span>
-    )
+    return <span className="text-gray-700 select-text" onMouseUp={handleMouseUp}>{texto}</span>
   }
 
-  // Separar rastros: alertas y manuales se procesan a nivel de frase; automáticos por palabra
-  const rastrosManuales  = rastros.filter(r => r.origen === 'manual')
-  const rastrosAlerta    = rastros.filter(r => r.origen === 'alerta')
-  const rastrosAuto      = rastros.filter(r => r.origen !== 'manual' && r.origen !== 'alerta')
+  const manuales = rastros.filter((r) => r.origen === 'manual')
+  const alertasR = rastros.filter((r) => r.origen === 'alerta')
+  const automaticos = rastros.filter((r) => r.origen !== 'manual' && r.origen !== 'alerta')
 
-  // Mapa de palabra → rastro automático
+  const limpiar = (s) => s.toLowerCase().replace(/[.,;:!?"“”‘’'()]/g, '')
   const mapaAuto = {}
-  rastrosAuto.forEach(r => {
-    const key = r.palabra.toLowerCase().replace(/[.,;:!?"""''()]/g, '')
-    if (!mapaAuto[key]) mapaAuto[key] = r
-  })
+  automaticos.forEach((r) => { const k = limpiar(r.palabra); if (!mapaAuto[k]) mapaAuto[k] = r })
 
-  // Construir segmentos del texto marcando frases (manuales y alertas) primero
-  // Resultado: array de { texto, rastro | null, esAlerta }
-  const construirSegmentos = () => {
-    let segmentos = [{ texto, rastro: null, esAlerta: false }]
-
-    // Procesar rastros manuales
-    rastrosManuales.forEach(rastro => {
+  // Marca frases (manuales y alertas) antes de procesar palabra por palabra
+  let segmentos = [{ texto, rastro: null, tipo: null }]
+  const marcar = (lista, tipo) => {
+    lista.forEach((rastro) => {
       const frase = rastro.palabra.toLowerCase()
       const nuevos = []
-      segmentos.forEach(seg => {
-        if (seg.rastro !== null || seg.esAlerta) { nuevos.push(seg); return }
+      segmentos.forEach((seg) => {
+        if (seg.rastro) { nuevos.push(seg); return }
         const idx = seg.texto.toLowerCase().indexOf(frase)
         if (idx === -1) { nuevos.push(seg); return }
-        if (idx > 0) nuevos.push({ texto: seg.texto.slice(0, idx), rastro: null, esAlerta: false })
-        nuevos.push({ texto: seg.texto.slice(idx, idx + frase.length), rastro, esAlerta: false })
-        if (idx + frase.length < seg.texto.length) {
-          nuevos.push({ texto: seg.texto.slice(idx + frase.length), rastro: null, esAlerta: false })
-        }
+        if (idx > 0) nuevos.push({ texto: seg.texto.slice(0, idx), rastro: null, tipo: null })
+        nuevos.push({ texto: seg.texto.slice(idx, idx + frase.length), rastro, tipo })
+        if (idx + frase.length < seg.texto.length) nuevos.push({ texto: seg.texto.slice(idx + frase.length), rastro: null, tipo: null })
       })
       segmentos = nuevos
     })
-
-    // Procesar rastros de alerta (frases o palabras) — misma lógica, color púrpura
-    rastrosAlerta.forEach(rastro => {
-      const frase = rastro.palabra.toLowerCase()
-      const nuevos = []
-      segmentos.forEach(seg => {
-        if (seg.rastro !== null || seg.esAlerta) { nuevos.push(seg); return }
-        const idx = seg.texto.toLowerCase().indexOf(frase)
-        if (idx === -1) { nuevos.push(seg); return }
-        if (idx > 0) nuevos.push({ texto: seg.texto.slice(0, idx), rastro: null, esAlerta: false })
-        nuevos.push({ texto: seg.texto.slice(idx, idx + frase.length), rastro, esAlerta: true })
-        if (idx + frase.length < seg.texto.length) {
-          nuevos.push({ texto: seg.texto.slice(idx + frase.length), rastro: null, esAlerta: false })
-        }
-      })
-      segmentos = nuevos
-    })
-
-    return segmentos
   }
-
-  const segmentos = construirSegmentos()
-
-  // Renderizar cada segmento
-  const renderSegmento = (seg, idx) => {
-    if (seg.esAlerta) {
-      // Frase/palabra de alerta — resaltado en púrpura con subrayado ondulado
-      return (
-        <span
-          key={idx}
-          className="cursor-default rounded px-0.5 transition-all hover:opacity-80"
-          style={{
-            backgroundColor: COLOR_ALERTA_BG,
-            color:           COLOR_ALERTA_TEXT,
-            fontWeight: '700',
-            textDecoration: 'underline',
-            textDecorationColor: COLOR_ALERTA_BAR,
-            textDecorationStyle: 'wavy',
-          }}
-        >
-          {seg.texto}
-        </span>
-      )
-    }
-
-    if (seg.rastro !== null) {
-      // Frase manual
-      return (
-        <span
-          key={idx}
-          onClick={e => { e.stopPropagation(); onClickToken(seg.rastro, e) }}
-          className="cursor-pointer rounded px-0.5 transition-all hover:opacity-80"
-          style={{ backgroundColor: '#FEF9C3', color: '#713F12', fontWeight: '500', textDecoration: 'underline dotted' }}
-        >
-          {seg.texto}
-        </span>
-      )
-    }
-
-    // Segmento sin rastro manual ni alerta — buscar palabras automáticas
-    const palabras = seg.texto.split(/(\s+)/)
-    return (
-      <span key={idx}>
-        {palabras.map((parte, j) => {
-          const clave  = parte.trim().toLowerCase().replace(/[.,;:!?"""''()]/g, '')
-          const rastro = mapaAuto[clave]
-
-          if (rastro && parte.trim()) {
-            return (
-              <span
-                key={j}
-                onClick={e => { e.stopPropagation(); onClickToken(rastro, e) }}
-                className="cursor-pointer rounded px-0.5 mx-0.5 transition-all hover:opacity-80"
-                style={{
-                  backgroundColor: PERFIL_COLOR_BG[rastro.perfil]  || '#F3F4F6',
-                  color:           PERFIL_COLOR_TEXT[rastro.perfil] || '#374151',
-                  fontWeight: '500',
-                  textDecoration: 'underline dotted',
-                }}
-              >
-                {parte}
-              </span>
-            )
-          }
-          return <span key={j}>{parte}</span>
-        })}
-      </span>
-    )
-  }
+  marcar(manuales, 'manual')
+  marcar(alertasR, 'alerta')
 
   return (
-    <span
-      ref={contenedorRef}
-      className="text-sm leading-relaxed select-text"
-      onMouseUp={handleMouseUp}
-    >
-      {segmentos.map((seg, idx) => renderSegmento(seg, idx))}
+    <span className="select-text" onMouseUp={handleMouseUp}>
+      {segmentos.map((seg, i) => {
+        if (seg.tipo === 'alerta') {
+          return (
+            <span key={i}
+              onClick={(e) => { e.stopPropagation(); onClickAlerta(seg.rastro) }}
+              title="Ver o editar alerta"
+              className="cursor-pointer rounded px-0.5 transition-all hover:brightness-95"
+              style={{ backgroundColor: COLOR_ALERTA.bg, color: COLOR_ALERTA.text, fontWeight: 700,
+                textDecoration: 'underline', textDecorationColor: COLOR_ALERTA.barra, textDecorationStyle: 'wavy' }}>
+              {seg.texto}
+            </span>
+          )
+        }
+        if (seg.tipo === 'manual') {
+          return (
+            <span key={i}
+              onClick={(e) => { e.stopPropagation(); onClickToken(seg.rastro) }}
+              className="cursor-pointer rounded px-0.5 transition-all hover:brightness-95"
+              style={{ backgroundColor: COLOR_MANUAL.bg, color: COLOR_MANUAL.text, fontWeight: 600, textDecoration: 'underline dotted' }}>
+              {seg.texto}
+            </span>
+          )
+        }
+        return (
+          <span key={i}>
+            {seg.texto.split(/(\s+)/).map((parte, j) => {
+              const rastro = mapaAuto[limpiar(parte.trim())]
+              if (rastro && parte.trim()) {
+                return (
+                  <span key={j}
+                    onClick={(e) => { e.stopPropagation(); onClickToken(rastro) }}
+                    className="cursor-pointer rounded px-0.5 mx-0.5 transition-all hover:brightness-95"
+                    style={{ backgroundColor: COLOR_PERFIL_BG[rastro.perfil] || '#F3F4F6',
+                      color: COLOR_PERFIL_TEXT[rastro.perfil] || '#374151', fontWeight: 600, textDecoration: 'underline dotted' }}>
+                    {parte}
+                  </span>
+                )
+              }
+              return <span key={j}>{parte}</span>
+            })}
+          </span>
+        )
+      })}
     </span>
   )
 }
 
-// ── Gráfico de barras: D/H/S + alertas ──────────────────────────────────────
-function GraficoBarras({ dist, alertas }) {
-  // Construir barras: espectros normales + alertas agrupadas
-  const alertasAgrupadas = {}
-  alertas.forEach(a => {
-    const key = a.etiqueta.toLowerCase()
-    if (!alertasAgrupadas[key]) {
-      alertasAgrupadas[key] = { etiqueta: a.etiqueta, peso: 0 }
-    }
-    alertasAgrupadas[key].peso = Math.min(1.0, alertasAgrupadas[key].peso + a.peso)
-  })
-
-  const total = dist.Dominante + dist.Hibrido + dist.Sumiso || 100
-  const barrasEspectro = [
-    { label: 'Dominante', valor: dist.Dominante / total, color: PERFIL_COLOR_PIE.Dominante },
-    { label: 'Híbrido',   valor: dist.Hibrido   / total, color: PERFIL_COLOR_PIE.Hibrido },
-    { label: 'Sumiso',    valor: dist.Sumiso     / total, color: PERFIL_COLOR_PIE.Sumiso },
+// ── Pestañas superiores estilo "Siguiendo | Para ti" ─────────────────────────
+function Pestanas({ activa, onCambiar, totalGraficas }) {
+  const items = [
+    { id: 'preguntas', label: 'Preguntas' },
+    { id: 'graficas', label: 'Gráficas', badge: totalGraficas },
   ]
-  const barrasAlerta = Object.values(alertasAgrupadas).map(a => ({
-    label: a.etiqueta,
-    valor: a.peso,
-    color: COLOR_ALERTA_BAR,
-  }))
-
-  const barras = [...barrasEspectro, ...barrasAlerta]
-  const svgH   = 160
-  const svgW   = 40 + barras.length * 44
-  const barH   = 120 // altura máxima en px
-
   return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-widest mb-3">
-        Distribución + alertas
-      </p>
-      <svg width={svgW} height={svgH} className="overflow-visible">
-        {/* Línea base */}
-        <line x1="30" y1={barH + 10} x2={svgW - 4} y2={barH + 10} stroke="#E5E7EB" strokeWidth="1" />
-
-        {/* Marcas de porcentaje */}
-        {[0, 25, 50, 75, 100].map(pct => {
-          const y = 10 + barH - (pct / 100) * barH
-          return (
-            <g key={pct}>
-              <line x1="26" y1={y} x2={svgW - 4} y2={y} stroke="#F3F4F6" strokeWidth="1" />
-              <text x="24" y={y + 4} textAnchor="end" fontSize="8" fill="#9CA3AF">{pct}</text>
-            </g>
-          )
-        })}
-
-        {/* Barras */}
-        {barras.map((b, i) => {
-          const x    = 34 + i * 44
-          const h    = Math.max(2, b.valor * barH)
-          const y    = 10 + barH - h
-          const isAlert = i >= barrasEspectro.length
-          return (
-            <g key={b.label}>
-              <rect
-                x={x}
-                y={y}
-                width={32}
-                height={h}
-                fill={b.color}
-                rx="3"
-                opacity={isAlert ? 0.9 : 0.8}
-              />
-              {/* Valor encima */}
-              <text x={x + 16} y={y - 4} textAnchor="middle" fontSize="8" fontWeight="600"
-                fill={isAlert ? COLOR_ALERTA_TEXT : '#374151'}>
-                {Math.round(b.valor * 100)}%
-              </text>
-              {/* Etiqueta debajo */}
-              <text x={x + 16} y={barH + 23} textAnchor="middle" fontSize="8"
-                fill={isAlert ? COLOR_ALERTA_TEXT : '#6B7280'}
-                fontWeight={isAlert ? '600' : '400'}>
-                {b.label.length > 7 ? b.label.slice(0, 6) + '…' : b.label}
-              </text>
-            </g>
-          )
-        })}
-      </svg>
-      {/* Leyenda de alertas */}
-      {barrasAlerta.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {barrasAlerta.map(b => (
-            <span key={b.label} className="flex items-center gap-1 text-xs"
-              style={{ color: COLOR_ALERTA_TEXT }}>
-              <span className="inline-block w-2 h-2 rounded-sm" style={{ backgroundColor: COLOR_ALERTA_BAR }} />
-              {b.label}: {Math.round(b.valor * 100)}%
-            </span>
-          ))}
-        </div>
-      )}
+    <div className="sticky top-0 z-30 flex justify-center gap-10 py-3 mb-6 rounded-xl"
+      style={{ backgroundColor: PALETA.navy }}>
+      {items.map((it) => {
+        const on = activa === it.id
+        return (
+          <button key={it.id} onClick={() => onCambiar(it.id)} className="relative pb-1.5 text-base transition-colors"
+            style={{ color: on ? '#FFFFFF' : 'rgba(207,250,254,0.55)', fontWeight: on ? 700 : 500 }}>
+            {it.label}
+            {it.badge > 0 && (
+              <span className="ml-1.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle"
+                style={{ backgroundColor: on ? PALETA.acento : PALETA.borde, color: on ? PALETA.navy : '#CFFAFE' }}>
+                {it.badge}
+              </span>
+            )}
+            <span className="absolute left-1/2 -translate-x-1/2 -bottom-0.5 h-[3px] rounded-full transition-all"
+              style={{ width: on ? '60%' : 0, backgroundColor: PALETA.acento }} />
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-// ── Gráfico de torta híbrida (solo D vs S en proporción relativa) ────────────
-function GraficoTortaHibrida({ dominante, sumiso }) {
-  const datos = [
-    { perfil: 'Dominante', valor: dominante, color: PERFIL_COLOR_PIE.Dominante },
-    { perfil: 'Sumiso',    valor: sumiso,    color: PERFIL_COLOR_PIE.Sumiso },
-  ]
-  const total = dominante + sumiso
-  if (total === 0) return null
+// ── Feed vertical de gráficas (deslizar arriba / abajo) ──────────────────────
+function FeedGraficas({ graficas }) {
+  const contenedor = useRef(null)
+  const [actual, setActual] = useState(0)
 
-  let startAngle = -Math.PI / 2
-  const slices = datos.map(d => {
-    const angle = (d.valor / total) * 2 * Math.PI
-    const x1 = 80 + 70 * Math.cos(startAngle)
-    const y1 = 80 + 70 * Math.sin(startAngle)
-    startAngle += angle
-    const x2 = 80 + 70 * Math.cos(startAngle)
-    const y2 = 80 + 70 * Math.sin(startAngle)
-    const large = angle > Math.PI ? 1 : 0
-    const path = `M80,80 L${x1},${y1} A70,70 0 ${large},1 ${x2},${y2} Z`
-    return { ...d, path }
-  })
+  const irA = useCallback((i) => {
+    const el = contenedor.current
+    if (!el) return
+    const destino = Math.max(0, Math.min(graficas.length - 1, i))
+    el.scrollTo({ top: destino * el.clientHeight, behavior: 'smooth' })
+  }, [graficas.length])
+
+  useEffect(() => {
+    const el = contenedor.current
+    if (!el) return
+    const onScroll = () => setActual(Math.round(el.scrollTop / el.clientHeight))
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === 'ArrowDown') { e.preventDefault(); irA(actual + 1) }
+      if (e.key === 'ArrowUp') { e.preventDefault(); irA(actual - 1) }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [actual, irA])
+
+  if (graficas.length === 0) {
+    return <div className="text-center py-16 text-sm text-gray-400">No hay datos suficientes para graficar.</div>
+  }
 
   return (
-    <div>
-      <p className="text-xs font-medium text-gray-500 uppercase tracking-widest mb-3">
-        Polaridad interna del Híbrido
-      </p>
-      <div className="flex items-center gap-6">
-        <svg width="160" height="160" viewBox="0 0 160 160">
-          {slices.map((s, i) => (
-            <path key={i} d={s.path} fill={s.color} stroke="white" strokeWidth="2" />
-          ))}
-        </svg>
-        <div className="space-y-2">
-          {datos.map(d => (
-            <div key={d.perfil} className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full" style={{ backgroundColor: d.color }} />
-              <span className="text-sm text-gray-700">{d.perfil}</span>
-              <span className="text-sm font-semibold text-gray-900 ml-2">
-                {total > 0 ? ((d.valor / total) * 100).toFixed(1) : 0}%
-              </span>
+    <div className="relative">
+      <div ref={contenedor} className="overflow-y-auto snap-y snap-mandatory rounded-2xl"
+        style={{ height: 'calc(100vh - 260px)', minHeight: 460, scrollbarWidth: 'none' }}>
+        {graficas.map((g, i) => (
+          <section key={g.id} className="snap-start h-full p-2">
+            <div className="h-full bg-white rounded-2xl border border-gray-100 shadow-sm flex flex-col overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-100 flex items-start justify-between gap-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: PALETA.borde }}>
+                    Gráfica {i + 1} de {graficas.length}
+                  </p>
+                  <h3 className="text-lg font-semibold text-gray-800 mt-0.5">{g.titulo}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">{g.descripcion}</p>
+                </div>
+              </div>
+              <div className="flex-1 flex items-center justify-center p-6 min-h-0">
+                <div className="w-full max-w-3xl">{g.render()}</div>
+              </div>
             </div>
-          ))}
-          <p className="text-xs text-gray-400 mt-2 max-w-[160px]">
-            Proporción D/S excluyendo puntaje Híbrido
-          </p>
-        </div>
+          </section>
+        ))}
       </div>
+
+      {/* Navegación lateral */}
+      {graficas.length > 1 && (
+        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex flex-col items-center gap-2">
+          <button onClick={() => irA(actual - 1)} disabled={actual === 0}
+            className="w-9 h-9 rounded-full text-white shadow disabled:opacity-30" style={{ backgroundColor: PALETA.navy }}
+            aria-label="Gráfica anterior">▲</button>
+          {graficas.map((g, i) => (
+            <button key={g.id} onClick={() => irA(i)} aria-label={g.titulo}
+              className="rounded-full transition-all"
+              style={{ width: 8, height: i === actual ? 22 : 8, backgroundColor: i === actual ? PALETA.navy : '#CBD5E1' }} />
+          ))}
+          <button onClick={() => irA(actual + 1)} disabled={actual === graficas.length - 1}
+            className="w-9 h-9 rounded-full text-white shadow disabled:opacity-30" style={{ backgroundColor: PALETA.navy }}
+            aria-label="Gráfica siguiente">▼</button>
+        </div>
+      )}
+      <p className="text-center text-xs text-gray-400 mt-2">Desliza o usa ↑ ↓ para cambiar de gráfica</p>
     </div>
   )
 }
 
 // ── Componente principal ─────────────────────────────────────────────────────
 function DetalleEvaluacion({ id, onVolver }) {
-  const [datos, setDatos]               = useState(null)
-  const [cargando, setCargando]         = useState(true)
+  const [datos, setDatos] = useState(null)
+  const [cargando, setCargando] = useState(true)
   const [distribucion, setDistribucion] = useState(null)
-  const [distHibrida, setDistHibrida]   = useState(null)
-
   const [alertas, setAlertas] = useState([])
+  const [pestana, setPestana] = useState('preguntas')
 
-  const [tooltipEditar, setTooltipEditar]       = useState(null)
+  const [tooltipEditar, setTooltipEditar] = useState(null)
   const [tooltipSeleccion, setTooltipSeleccion] = useState(null)
+  const [tooltipAlerta, setTooltipAlerta] = useState(null)
+  const [error, setError] = useState('')
 
-  const [evidenciaExpandida, setEvidenciaExpandida]     = useState(false)
+  const [evidenciaExpandida, setEvidenciaExpandida] = useState(false)
   const [evidenciaSeleccionada, setEvidenciaSeleccionada] = useState(new Set())
-  const [filtroEspectro, setFiltroEspectro]             = useState('Todos')
-  const [copiadoOk, setCopiadoOk]                       = useState(false)
+  const [filtroEspectro, setFiltroEspectro] = useState('Todos')
+  const [copiadoOk, setCopiadoOk] = useState(false)
 
-  useEffect(() => {
-    cargar()
-  }, [id])
-
-  const cargar = async () => {
+  const cargar = useCallback(async () => {
     try {
       const res = await api.get(`/api/diagnostico/evaluaciones/${id}/detalle`)
       setDatos(res.data)
-
-      // Distribución final: última entrada del historial
       const ultima = res.data.historial.at(-1)
-      if (ultima) {
-        setDistribucion(ultima.distribucion_tras_respuesta)
-
-        // Bug 1 fix: calcular híbrida en frontend — el backend no la envía en /detalle
-        // Condición A: D≥30% AND S≥30% → ambos polos superan umbral
-        // Condición B: Híbrido≥60% → espectro híbrido ganó por mayoría directa
-        // En ambos casos la proporción interna es D/(D+S) y S/(D+S)
-        const d = ultima.distribucion_tras_respuesta.Dominante
-        const h = ultima.distribucion_tras_respuesta.Hibrido
-        const s = ultima.distribucion_tras_respuesta.Sumiso
-        const esHibrido = (d >= 30 && s >= 30) || (h >= 60)
-        if (esHibrido) {
-          const totalPolar = d + s
-          if (totalPolar > 0) {
-            setDistHibrida({
-              Dominante: parseFloat((d / totalPolar).toFixed(4)),
-              Sumiso:    parseFloat((s / totalPolar).toFixed(4)),
-            })
-          } else {
-            // caso extremo: H=100%, D=0, S=0 — mostrar 50/50
-            setDistHibrida({ Dominante: 0.5, Sumiso: 0.5 })
-          }
-        } else {
-          setDistHibrida(null)
-        }
-      }
-
-      // Bug 2 fix: reconstruir alertas desde rastros con origen='alerta'
-      // El backend guarda: lema=etiqueta, dependencia="alerta:0.7", palabra=texto marcado
-      const todosRastros = res.data.historial.flatMap(item => item.rastro_lexico)
-      const alertasReconstruidas = todosRastros
-        .filter(r => r.origen === 'alerta')
-        .map(r => {
-          // extraer peso del campo dependencia: "alerta:0.7" → 0.7
-          const pesoRaw = r.dependencia?.startsWith('alerta:')
-            ? parseFloat(r.dependencia.split(':')[1]) || 0.5
-            : 0.5
-          return {
-            etiqueta: r.lema || r.palabra,
-            peso:     pesoRaw,
-            palabra:  r.palabra,
-            idRastro: r.id_rastro,
-          }
-        })
-      setAlertas(alertasReconstruidas)
-
-    } catch { /* silencioso */ }
-    finally { setCargando(false) }
-  }
-
-  // Cerrar tooltips al click fuera — pero NO durante selección de texto
-  useEffect(() => {
-    const handler = (e) => {
-      // No cerrar si el click fue dentro de un tooltip
-      if (e.target.closest('[data-tooltip]')) return
-      setTooltipEditar(null)
-      setTooltipSeleccion(null)
+      setDistribucion(ultima ? ultima.distribucion_tras_respuesta : null)
+      setAlertas(reconstruirAlertas(res.data.historial))
+    } catch {
+      setError('Error al cargar la evaluación.')
+    } finally {
+      setCargando(false)
     }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [])
+  }, [id])
 
-  const handleClickToken = (rastro, e) => {
-    setTooltipSeleccion(null)
-    setTooltipEditar({
-      id_rastro:    rastro.id_rastro,
-      id_respuesta: rastro.id_respuesta,   // necesario para persistir alerta
-      palabra:      rastro.palabra,
-      lema:         rastro.lema,
-      perfil:       rastro.perfil,
-      puntos:       rastro.puntos,
-      origen:       rastro.origen || 'automatico',
-      posicion: {
-        x: Math.min(e.clientX, window.innerWidth - 310),
-        y: e.clientY + window.scrollY + 10,
-      }
-    })
-  }
+  useEffect(() => { cargar() }, [cargar])
 
-  const handleSeleccionTexto = (info) => {
-    setTooltipEditar(null)
-    setTooltipSeleccion(info)
-  }
+  const cerrarTodo = () => { setTooltipEditar(null); setTooltipSeleccion(null); setTooltipAlerta(null) }
+  const fallo = (msg) => { setError(msg); setTimeout(() => setError(''), 4000) }
 
   const handleGuardarEdicion = async (idRastro, perfil, puntos) => {
     try {
-      const res = await api.patch(`/api/diagnostico/rastros/${idRastro}`, {
-        perfil_asignado: perfil,
-        puntos_sumados:  puntos,
-      })
-      setDistribucion(res.data.distribucion)
-      if (res.data.distribucion_hibrida) setDistHibrida(res.data.distribucion_hibrida)
-      else setDistHibrida(null)
-      setTooltipEditar(null)
-      await cargar()
-    } catch { /* silencioso */ }
-  }
-
-  const handleGuardarAlerta = async ({ etiqueta, peso, palabra, idRastro, idRespuesta }) => {
-    try {
-      // Persistir la alerta como rastro especial con origen='alerta'
-      // El campo lema (verbo_lematizado) guarda la etiqueta para reconstrucción
-      await api.post(`/api/diagnostico/rastros-alerta`, {
-        id_respuesta:  idRespuesta,
-        texto_marcado: palabra,
-        etiqueta_alerta: etiqueta,
-        peso,
-      })
-      // Recargar para leer las alertas persistidas desde la BD
-      await cargar()
-    } catch {
-      // Fallback local si el endpoint no existe aún (no rompe la sesión)
-      setAlertas(prev => [...prev, { etiqueta, peso, palabra, idRastro }])
-    }
+      await api.patch(`/api/diagnostico/rastros/${idRastro}`, { perfil_asignado: perfil, puntos_sumados: puntos })
+      cerrarTodo(); await cargar()
+    } catch { fallo('No se pudo guardar el rastro.') }
   }
 
   const handleGuardarManual = async (idRespuesta, textoSel, perfil, puntos) => {
     try {
-      const res = await api.post(`/api/diagnostico/rastros-manuales`, {
-        id_respuesta:       idRespuesta,
-        texto_seleccionado: textoSel,
-        perfil_asignado:    perfil,
-        puntos_sumados:     puntos,
+      await api.post('/api/diagnostico/rastros-manuales', {
+        id_respuesta: idRespuesta, texto_seleccionado: textoSel, perfil_asignado: perfil, puntos_sumados: puntos,
       })
-      setDistribucion(res.data.distribucion)
-      if (res.data.distribucion_hibrida) setDistHibrida(res.data.distribucion_hibrida)
-      else setDistHibrida(null)
-      setTooltipSeleccion(null)
-      await cargar()
-    } catch { /* silencioso */ }
+      cerrarTodo(); await cargar()
+    } catch { fallo('No se pudo crear el rastro manual.') }
   }
 
-  if (cargando) return (
-    <div className="text-center py-16 text-sm text-gray-400">Cargando evaluación...</div>
-  )
-  if (!datos) return (
-    <div className="text-center py-16 text-sm text-red-400">Error al cargar la evaluación.</div>
-  )
+  const handleGuardarAlerta = async ({ etiqueta, peso, palabra, idRespuesta }) => {
+    try {
+      await api.post('/api/diagnostico/rastros-alerta', {
+        id_respuesta: idRespuesta, texto_marcado: palabra, etiqueta_alerta: etiqueta, peso,
+      })
+      await cargar()
+    } catch { fallo('No se pudo guardar la alerta.') }
+  }
 
-  const dist = distribucion || { Dominante: 33.3, Hibrido: 33.3, Sumiso: 33.3 }
+  const handleEditarAlerta = async (idRastro, etiqueta, peso) => {
+    try {
+      await api.patch(`/api/diagnostico/rastros-alerta/${idRastro}`, { etiqueta_alerta: etiqueta, peso })
+      cerrarTodo(); await cargar()
+    } catch { fallo('No se pudo actualizar la alerta.') }
+  }
 
-  // ── Datos para Bloque 3 ──────────────────────────────────────────────────
-  const todosLosRastros = datos.historial.flatMap(item => item.rastro_lexico)
+  const handleEliminarAlerta = async (idRastro) => {
+    try {
+      await api.delete(`/api/diagnostico/rastros-alerta/${idRastro}`)
+      cerrarTodo(); await cargar()
+    } catch { fallo('No se pudo eliminar la alerta.') }
+  }
 
-  const FILTROS_ESPECTRO = ['Todos', 'Dominante', 'Híbrido', 'Sumiso', 'Manual']
+  if (cargando) return <div className="text-center py-16 text-sm text-gray-400">Cargando evaluación...</div>
+  if (!datos) return <div className="text-center py-16 text-sm text-red-400">Error al cargar la evaluación.</div>
 
-  const rastrosFiltrados = todosLosRastros.filter(r => {
-    if (filtroEspectro === 'Todos') return true
-    if (filtroEspectro === 'Manual') return r.origen === 'manual'
-    if (filtroEspectro === 'Híbrido') return r.perfil === 'Hibrido'
-    return r.perfil === filtroEspectro
+  const polaridad = calcularPolaridad(distribucion)
+  const graficas = construirGraficas({ dist: distribucion, polaridad, alertas, historial: datos.historial })
+
+  // ── Evidencia léxica ──
+  const todos = datos.historial.flatMap((item) => item.rastro_lexico)
+  const FILTROS = ['Todos', 'Dominante', 'Hibrido', 'Sumiso', 'Manual', 'Alerta']
+  const tipoDe = (r) => (r.origen === 'alerta' ? 'Alerta' : r.origen === 'manual' ? 'Manual' : r.perfil)
+  const etiquetaFiltro = (f) => (PERFILES.includes(f) ? etiquetaPerfil(f) : f)
+  const estiloTipo = (t) =>
+    t === 'Alerta' ? { bg: COLOR_ALERTA.bg, txt: COLOR_ALERTA.text }
+    : t === 'Manual' ? { bg: COLOR_MANUAL.bg, txt: COLOR_MANUAL.text }
+    : t === 'Todos' ? { bg: '#F3F4F6', txt: '#374151' }
+    : { bg: COLOR_PERFIL_BG[t], txt: COLOR_PERFIL_TEXT[t] }
+
+  const filtrados = todos.filter((r) => filtroEspectro === 'Todos' || tipoDe(r) === filtroEspectro)
+
+  const toggleChip = (rid) => setEvidenciaSeleccionada((prev) => {
+    const n = new Set(prev); n.has(rid) ? n.delete(rid) : n.add(rid); return n
   })
 
-  const toggleChip = (id) => {
-    setEvidenciaSeleccionada(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id)
-      else next.add(id)
-      return next
-    })
-  }
-
-  const seleccionarTodoFiltro = () => {
-    setEvidenciaSeleccionada(prev => {
-      const next = new Set(prev)
-      rastrosFiltrados.forEach(r => next.add(r.id_rastro))
-      return next
-    })
-  }
-
-  const limpiarSeleccion = () => setEvidenciaSeleccionada(new Set())
-
-  const copiarAlPortapapeles = async () => {
-    const seleccionados = todosLosRastros.filter(r => evidenciaSeleccionada.has(r.id_rastro))
+  const copiar = async () => {
     const grupos = {}
-    seleccionados.forEach(r => {
-      const etiqueta = r.origen === 'manual' ? 'MANUAL' : r.perfil.toUpperCase()
-      if (!grupos[etiqueta]) grupos[etiqueta] = []
-      grupos[etiqueta].push(r.palabra)
+    todos.filter((r) => evidenciaSeleccionada.has(r.id_rastro)).forEach((r) => {
+      const t = tipoDe(r)
+      const clave = (PERFILES.includes(t) ? etiquetaPerfil(t) : t).toUpperCase()
+      ;(grupos[clave] = grupos[clave] || []).push(r.origen === 'alerta' ? `${r.palabra} (${r.lema})` : r.palabra)
     })
-    const texto = Object.entries(grupos)
-      .map(([etiqueta, palabras]) => `${etiqueta}: ${palabras.join(', ')}`)
-      .join('\n')
     try {
-      await navigator.clipboard.writeText(texto)
-      setCopiadoOk(true)
-      setTimeout(() => setCopiadoOk(false), 2000)
+      await navigator.clipboard.writeText(Object.entries(grupos).map(([k, v]) => `${k}: ${v.join(', ')}`).join('\n'))
+      setCopiadoOk(true); setTimeout(() => setCopiadoOk(false), 2000)
     } catch { /* silencioso */ }
-  }
-
-  const getChipBg = (rastro) => {
-    if (rastro.origen === 'manual') return PERFIL_COLOR_BG.manual
-    return PERFIL_COLOR_BG[rastro.perfil] || '#F3F4F6'
-  }
-  const getChipText = (rastro) => {
-    if (rastro.origen === 'manual') return PERFIL_COLOR_TEXT.manual
-    return PERFIL_COLOR_TEXT[rastro.perfil] || '#374151'
-  }
-
-  const FILTRO_COLOR_BG = {
-    Todos:     '#F3F4F6',
-    Dominante: PERFIL_COLOR_BG.Dominante,
-    Híbrido:   PERFIL_COLOR_BG.Hibrido,
-    Sumiso:    PERFIL_COLOR_BG.Sumiso,
-    Manual:    PERFIL_COLOR_BG.manual,
-  }
-  const FILTRO_COLOR_TEXT = {
-    Todos:     '#374151',
-    Dominante: PERFIL_COLOR_TEXT.Dominante,
-    Híbrido:   PERFIL_COLOR_TEXT.Hibrido,
-    Sumiso:    PERFIL_COLOR_TEXT.Sumiso,
-    Manual:    PERFIL_COLOR_TEXT.manual,
   }
 
   return (
     <div>
-
-      {/* Overlay + Tooltips flotantes centrados */}
-      {(tooltipEditar || tooltipSeleccion) && (
-        <div
-          className="fixed inset-0 z-40 bg-black bg-opacity-30"
-          onClick={() => { setTooltipEditar(null); setTooltipSeleccion(null) }}
-        />
+      {/* Overlay + modales */}
+      {(tooltipEditar || tooltipSeleccion || tooltipAlerta) && (
+        <div className="fixed inset-0 z-40 bg-black/30" onClick={cerrarTodo} />
       )}
       {tooltipEditar && (
-        <TooltipEditable
-          token={tooltipEditar}
-          posicion={tooltipEditar.posicion}
-          onGuardar={handleGuardarEdicion}
-          onCancelar={() => setTooltipEditar(null)}
-          onGuardarAlerta={handleGuardarAlerta}
-        />
+        <TooltipEditable token={tooltipEditar} onGuardar={handleGuardarEdicion} onCancelar={cerrarTodo} onGuardarAlerta={handleGuardarAlerta} />
       )}
       {tooltipSeleccion && (
-        <TooltipSeleccion
-          texto={tooltipSeleccion.texto}
-          idRespuesta={tooltipSeleccion.idRespuesta}
-          posicion={tooltipSeleccion.posicion}
-          onGuardar={handleGuardarManual}
-          onCancelar={() => setTooltipSeleccion(null)}
-          onGuardarAlerta={handleGuardarAlerta}
-        />
+        <TooltipSeleccion texto={tooltipSeleccion.texto} idRespuesta={tooltipSeleccion.idRespuesta}
+          onGuardar={handleGuardarManual} onCancelar={cerrarTodo} onGuardarAlerta={handleGuardarAlerta} />
+      )}
+      {tooltipAlerta && (
+        <TooltipAlerta alerta={tooltipAlerta} onGuardar={handleEditarAlerta} onEliminar={handleEliminarAlerta} onCancelar={cerrarTodo} />
       )}
 
       {/* Encabezado */}
-      <div className="flex items-center gap-4 mb-8">
-        <button onClick={onVolver} className="text-sm text-gray-500 hover:text-gray-700">← Volver</button>
-        <div>
-          <h2 className="text-lg font-medium text-gray-800">
-            Detalle de evaluación — {datos.candidato.nombre}
-          </h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            {datos.fecha_fin ? new Date(datos.fecha_fin).toLocaleDateString('es-BO', {
-              year: 'numeric', month: 'long', day: 'numeric'
-            }) : ''}
-          </p>
-        </div>
-      </div>
-
-      {/* Bloque 1: Gráfico */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6 mb-6">
-        <h3 className="text-sm font-medium text-gray-600 uppercase tracking-widest mb-4">
-          Distribución conductual
-          <span className="ml-2 text-xs font-normal text-gray-400 normal-case">
-            — se actualiza al editar o agregar rastros
-          </span>
-        </h3>
-        <div className="flex items-start gap-12 flex-wrap">
-          <GraficoTorta
-            dominante={dist.Dominante}
-            hibrido={dist.Hibrido}
-            sumiso={dist.Sumiso}
-          />
-          {distHibrida && (
-            <GraficoTortaHibrida
-              dominante={distHibrida.Dominante}
-              sumiso={distHibrida.Sumiso}
-            />
-          )}
-          {alertas.length > 0 && (
-            <GraficoBarras dist={dist} alertas={alertas} />
-          )}
-        </div>
-        <div className="mt-4 pt-4 border-t border-gray-50 flex gap-6 text-sm text-gray-500">
-          <span>Perfil sistema: <strong className="text-gray-800">{datos.perfil_sistema}</strong></span>
-          <span>Confianza: <strong className="text-gray-800">{datos.confianza_sistema}%</strong></span>
-          <span>Psicólogo: <strong className="text-gray-800">{datos.psicologo.nombre}</strong></span>
-        </div>
-      </div>
-
-      {/* Bloque 2+3: Historial con rastro integrado */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6">
-        <h3 className="text-sm font-medium text-gray-600 uppercase tracking-widest mb-2">
-          Historial de la evaluación
-        </h3>
-        <p className="text-xs text-gray-400 mb-5">
-          Haz clic en palabras resaltadas para editarlas. Selecciona texto con el mouse para crear un rastro manual.
-        </p>
-
-        {/* Leyenda */}
-        <div className="flex gap-3 mb-5 flex-wrap">
-          {[
-            { label: 'Dominante', bg: PERFIL_COLOR_BG.Dominante, txt: PERFIL_COLOR_TEXT.Dominante },
-            { label: 'Híbrido',   bg: PERFIL_COLOR_BG.Hibrido,   txt: PERFIL_COLOR_TEXT.Hibrido },
-            { label: 'Sumiso',    bg: PERFIL_COLOR_BG.Sumiso,     txt: PERFIL_COLOR_TEXT.Sumiso },
-            { label: 'Manual',    bg: PERFIL_COLOR_BG.manual,     txt: PERFIL_COLOR_TEXT.manual },
-            { label: 'Alerta',    bg: COLOR_ALERTA_BG,            txt: COLOR_ALERTA_TEXT },
-          ].map(l => (
-            <span key={l.label} className="flex items-center gap-1.5 text-xs">
-              <span className="px-2 py-0.5 rounded font-medium" style={{ backgroundColor: l.bg, color: l.txt }}>
-                {l.label === 'Alerta' ? '⚠ Alerta' : l.label}
-              </span>
+      <div className="rounded-2xl px-6 py-5 mb-4 text-white" style={{ backgroundColor: PALETA.navyOscuro, border: `1px solid ${PALETA.borde}` }}>
+        <button onClick={onVolver} className="text-sm text-cyan-100/70 hover:text-white transition-colors">← Volver</button>
+        <div className="mt-3 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <div className="w-8 h-px mb-3" style={{ backgroundColor: PALETA.acento }} />
+            <h2 className="text-xl font-light">{datos.candidato.nombre}</h2>
+            <p className="text-xs text-cyan-100/60 mt-1">Evaluación finalizada el {formatoFechaHora(datos.fecha_fin)}</p>
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <span className="px-3 py-1.5 rounded-lg" style={{ backgroundColor: PALETA.navy, border: `1px solid ${PALETA.borde}` }}>
+              Perfil sistema: <strong style={{ color: PALETA.acento }}>{etiquetaPerfil(datos.perfil_sistema)}</strong>
             </span>
-          ))}
-        </div>
-
-        <div className="space-y-6">
-          {datos.historial.map((item, idx) => (
-            <div key={item.id_respuesta} className="border-l-2 border-gray-100 pl-4">
-              <p className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-1">
-                Pregunta {idx + 1}
-              </p>
-              <p className="text-sm text-gray-600 mb-2 italic">"{item.pregunta}"</p>
-
-              <div className="bg-gray-50 rounded-lg p-3 mb-3 leading-relaxed">
-                <TextoResaltado
-                  texto={item.texto_respuesta}
-                  rastros={item.rastro_lexico}
-                  onClickToken={handleClickToken}
-                  onSeleccionTexto={handleSeleccionTexto}
-                  idRespuesta={item.id_respuesta}
-                  alertas={alertas}
-                />
-              </div>
-
-              <div className="flex gap-3 text-xs flex-wrap">
-                <span className="text-gray-400">Distribución tras esta respuesta:</span>
-                {Object.entries(item.distribucion_tras_respuesta).map(([perfil, val]) => (
-                  <span
-                    key={perfil}
-                    className="px-2 py-0.5 rounded font-medium"
-                    style={{ backgroundColor: PERFIL_COLOR_BG[perfil], color: PERFIL_COLOR_TEXT[perfil] }}
-                  >
-                    {perfil}: {val}%
-                  </span>
-                ))}
-              </div>
-            </div>
-          ))}
+            <span className="px-3 py-1.5 rounded-lg" style={{ backgroundColor: PALETA.navy, border: `1px solid ${PALETA.borde}` }}>
+              Confianza: <strong style={{ color: PALETA.acento }}>{datos.confianza_sistema}%</strong>
+            </span>
+            <span className="px-3 py-1.5 rounded-lg" style={{ backgroundColor: PALETA.navy, border: `1px solid ${PALETA.borde}` }}>
+              Psicólogo: <strong className="text-white">{datos.psicologo.nombre}</strong>
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Bloque 3: Evidencia léxica seleccionada */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6 mt-6">
-        {/* Header clicable */}
-        <button
-          className="w-full flex items-center justify-between text-left"
-          onClick={() => setEvidenciaExpandida(v => !v)}
-        >
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium text-gray-600 uppercase tracking-widest">
-              Evidencia léxica para el informe
-            </h3>
-            {evidenciaSeleccionada.size > 0 && (
-              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full text-xs font-semibold bg-gray-800 text-white">
-                {evidenciaSeleccionada.size}
-              </span>
-            )}
-          </div>
-          <span className="text-gray-400 text-sm select-none">
-            {evidenciaExpandida ? '▾' : '▸'}
-          </span>
-        </button>
+      {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">{error}</div>}
 
-        {/* Contenido expandible */}
-        {evidenciaExpandida && (
-          <div className="mt-5">
-            {/* Filtros de espectro */}
-            <div className="flex gap-2 flex-wrap mb-4">
-              {FILTROS_ESPECTRO.map(f => {
-                const activo = filtroEspectro === f
-                return (
-                  <button
-                    key={f}
-                    onClick={() => setFiltroEspectro(f)}
-                    className="px-3 py-1 rounded-full text-xs font-medium transition-all border"
-                    style={
-                      activo
-                        ? {
-                            backgroundColor: FILTRO_COLOR_BG[f],
-                            color: FILTRO_COLOR_TEXT[f],
-                            borderColor: FILTRO_COLOR_TEXT[f],
-                          }
-                        : {
-                            backgroundColor: 'transparent',
-                            color: '#6B7280',
-                            borderColor: '#E5E7EB',
-                          }
-                    }
-                  >
-                    {f}
-                  </button>
-                )
-              })}
+      <Pestanas activa={pestana} onCambiar={setPestana} totalGraficas={graficas.length} />
+
+      {pestana === 'graficas' && <FeedGraficas graficas={graficas} />}
+
+      {pestana === 'preguntas' && (
+        <>
+          {/* Instrucciones + leyenda */}
+          <div className="bg-white border border-gray-100 rounded-xl px-5 py-4 mb-5 flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-gray-500">
+              Haz clic en una palabra resaltada para editarla. Selecciona texto con el mouse para crear un rastro manual o una alerta.
+            </p>
+            <div className="flex gap-2 flex-wrap">
+              {[...PERFILES.map((p) => ({ l: etiquetaPerfil(p), ...estiloTipo(p) })),
+                { l: 'Manual', ...estiloTipo('Manual') }, { l: '▲ Alerta', ...estiloTipo('Alerta') }].map((x) => (
+                <span key={x.l} className="px-2 py-0.5 rounded text-xs font-semibold" style={{ backgroundColor: x.bg, color: x.txt }}>{x.l}</span>
+              ))}
             </div>
+          </div>
 
-            {/* Grid de chips */}
-            {rastrosFiltrados.length === 0 ? (
-              <p className="text-xs text-gray-400 py-4 text-center">
-                No hay rastros para este filtro.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-2 mb-5">
-                {rastrosFiltrados.map(r => {
-                  const seleccionado = evidenciaSeleccionada.has(r.id_rastro)
-                  return (
-                    <button
-                      key={r.id_rastro}
-                      onClick={() => toggleChip(r.id_rastro)}
-                      className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border"
-                      style={{
-                        backgroundColor: getChipBg(r),
-                        color: getChipText(r),
-                        borderColor: seleccionado ? getChipText(r) : 'transparent',
-                        boxShadow: seleccionado ? `0 0 0 1.5px ${getChipText(r)}` : 'none',
-                        opacity: seleccionado ? 1 : 0.75,
-                      }}
-                    >
-                      {seleccionado && (
-                        <span className="text-xs leading-none">✓</span>
-                      )}
-                      <span>{r.palabra}</span>
-                      <span className="opacity-60">·</span>
-                      <span className="opacity-70">
-                        {r.origen === 'manual' ? 'manual' : r.perfil.toLowerCase()}
+          {/* Preguntas */}
+          <div className="space-y-4">
+            {datos.historial.map((item, idx) => {
+              const d = item.distribucion_tras_respuesta || {}
+              return (
+                <div key={item.id_respuesta} className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
+                  <div className="flex items-start gap-3 px-5 py-4" style={{ backgroundColor: '#F0F7F9', borderBottom: '1px solid #DCEBEF' }}>
+                    <span className="shrink-0 w-8 h-8 rounded-lg flex items-center justify-center text-sm font-bold"
+                      style={{ backgroundColor: PALETA.navy, color: PALETA.acento }}>{idx + 1}</span>
+                    <div className="flex-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-widest" style={{ color: PALETA.borde }}>Pregunta {idx + 1}</p>
+                      <p className="text-sm text-gray-700 mt-0.5">{item.pregunta}</p>
+                    </div>
+                    {item.modalidad && item.modalidad !== 'texto' && (
+                      <span className="shrink-0 text-[11px] font-semibold px-2 py-1 rounded-full bg-cyan-50 text-cyan-800 border border-cyan-100"
+                        title="El candidato dictó esta respuesta por voz">
+                        🎙 {item.modalidad === 'mixta' ? 'Voz + texto' : 'Por voz'}
                       </span>
-                      <span className="opacity-50 text-[10px]">{r.puntos}</span>
-                    </button>
-                  )
-                })}
+                    )}
+                  </div>
+
+                  <div className="px-5 py-4">
+                    <div className="text-[15px] leading-relaxed text-gray-800 rounded-xl p-4 border-l-4"
+                      style={{ backgroundColor: '#FAFBFC', borderLeftColor: PALETA.acento }}>
+                      <TextoResaltado
+                        texto={item.texto_respuesta}
+                        rastros={item.rastro_lexico}
+                        idRespuesta={item.id_respuesta}
+                        onClickToken={(r) => { cerrarTodo(); setTooltipEditar({ ...r, origen: r.origen || 'automatico' }) }}
+                        onClickAlerta={(r) => { cerrarTodo(); setTooltipAlerta(reconstruirAlertas([{ rastro_lexico: [r] }])[0]) }}
+                        onSeleccionTexto={(info) => { cerrarTodo(); setTooltipSeleccion(info) }}
+                      />
+                    </div>
+
+                    {/* Distribución tras la respuesta: barra apilada */}
+                    <div className="mt-3">
+                      <div className="flex h-2 rounded-full overflow-hidden bg-gray-100">
+                        {PERFILES.map((p) => (
+                          <div key={p} style={{ width: `${d[p] || 0}%`, backgroundColor: COLOR_PERFIL_TEXT[p], opacity: 0.75 }} />
+                        ))}
+                      </div>
+                      <div className="flex gap-2 text-xs flex-wrap mt-2">
+                        <span className="text-gray-400">Tras esta respuesta:</span>
+                        {PERFILES.map((p) => (
+                          <span key={p} className="px-2 py-0.5 rounded font-medium" style={{ backgroundColor: COLOR_PERFIL_BG[p], color: COLOR_PERFIL_TEXT[p] }}>
+                            {etiquetaPerfil(p)}: {d[p] ?? 0}%
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Evidencia léxica para el informe */}
+          <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6 mt-6">
+            <button className="w-full flex items-center justify-between text-left" onClick={() => setEvidenciaExpandida((v) => !v)}>
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold uppercase tracking-widest" style={{ color: PALETA.navy }}>Evidencia léxica para el informe</h3>
+                {evidenciaSeleccionada.size > 0 && (
+                  <span className="px-2 py-0.5 rounded-full text-xs font-bold" style={{ backgroundColor: PALETA.navy, color: PALETA.acento }}>
+                    {evidenciaSeleccionada.size}
+                  </span>
+                )}
+              </div>
+              <span className="text-gray-400 text-sm select-none">{evidenciaExpandida ? '▾' : '▸'}</span>
+            </button>
+
+            {evidenciaExpandida && (
+              <div className="mt-5">
+                <div className="flex gap-2 flex-wrap mb-4">
+                  {FILTROS.map((f) => {
+                    const on = filtroEspectro === f
+                    const e = estiloTipo(f)
+                    return (
+                      <button key={f} onClick={() => setFiltroEspectro(f)}
+                        className="px-3 py-1 rounded-full text-xs font-medium transition-all border"
+                        style={on ? { backgroundColor: e.bg, color: e.txt, borderColor: e.txt } : { color: '#6B7280', borderColor: '#E5E7EB' }}>
+                        {etiquetaFiltro(f)}
+                      </button>
+                    )
+                  })}
+                </div>
+
+                {filtrados.length === 0 ? (
+                  <p className="text-xs text-gray-400 py-4 text-center">No hay rastros para este filtro.</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2 mb-5">
+                    {filtrados.map((r) => {
+                      const sel = evidenciaSeleccionada.has(r.id_rastro)
+                      const t = tipoDe(r)
+                      const e = estiloTipo(t)
+                      return (
+                        <button key={r.id_rastro} onClick={() => toggleChip(r.id_rastro)}
+                          className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium transition-all border"
+                          style={{ backgroundColor: e.bg, color: e.txt, borderColor: sel ? e.txt : 'transparent',
+                            boxShadow: sel ? `0 0 0 1.5px ${e.txt}` : 'none', opacity: sel ? 1 : 0.8 }}>
+                          {sel && <span>✓</span>}
+                          <span>{r.palabra}</span>
+                          <span className="opacity-60">·</span>
+                          <span className="opacity-75">{t === 'Alerta' ? r.lema : PERFILES.includes(t) ? etiquetaPerfil(t).toLowerCase() : 'manual'}</span>
+                          {t !== 'Alerta' && <span className="opacity-50 text-[10px]">{r.puntos}</span>}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 flex-wrap pt-4 border-t border-gray-100">
+                  <span className="text-xs text-gray-400">
+                    {evidenciaSeleccionada.size > 0 ? `${evidenciaSeleccionada.size} seleccionada${evidenciaSeleccionada.size !== 1 ? 's' : ''}` : 'Ninguna seleccionada'}
+                  </span>
+                  <button onClick={() => setEvidenciaSeleccionada((p) => { const n = new Set(p); filtrados.forEach((r) => n.add(r.id_rastro)); return n })}
+                    className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50">Seleccionar todo el filtro</button>
+                  <button onClick={() => setEvidenciaSeleccionada(new Set())}
+                    className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50">Limpiar selección</button>
+                  <button onClick={copiar} disabled={evidenciaSeleccionada.size === 0}
+                    className="ml-auto text-xs px-4 py-1.5 rounded-lg font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={copiadoOk ? { backgroundColor: '#D1FAE5', color: '#065F46' } : { backgroundColor: PALETA.navy, color: PALETA.acento }}>
+                    {copiadoOk ? '✓ Copiado' : 'Copiar al portapapeles'}
+                  </button>
+                </div>
               </div>
             )}
-
-            {/* Footer */}
-            <div className="flex items-center gap-3 flex-wrap pt-4 border-t border-gray-50">
-              <span className="text-xs text-gray-400">
-                {evidenciaSeleccionada.size > 0
-                  ? `${evidenciaSeleccionada.size} seleccionada${evidenciaSeleccionada.size !== 1 ? 's' : ''}`
-                  : 'Ninguna seleccionada'}
-              </span>
-
-              <button
-                onClick={seleccionarTodoFiltro}
-                className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                Seleccionar todo el filtro
-              </button>
-
-              <button
-                onClick={limpiarSeleccion}
-                className="text-xs px-3 py-1 rounded-lg border border-gray-200 text-gray-500 hover:bg-gray-50 transition-colors"
-              >
-                Limpiar selección
-              </button>
-
-              <button
-                onClick={copiarAlPortapapeles}
-                disabled={evidenciaSeleccionada.size === 0}
-                className="ml-auto text-xs px-4 py-1.5 rounded-lg font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                style={
-                  copiadoOk
-                    ? { backgroundColor: '#D1FAE5', color: '#065F46' }
-                    : { backgroundColor: '#1F2937', color: '#FFFFFF' }
-                }
-              >
-                {copiadoOk ? '✓ Copiado' : '📋 Copiar al portapapeles'}
-              </button>
-            </div>
           </div>
-        )}
-      </div>
-
+        </>
+      )}
     </div>
   )
 }

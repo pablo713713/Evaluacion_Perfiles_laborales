@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import BancoPreguntas from '../components/psychologist/BancoPreguntas'
 import Dashboard from '../components/psychologist/Dashboard'
+import LexiconPanel from '../components/psychologist/LexiconPanel'
 
 function PsicologoPage() {
-  const rol = localStorage.getItem('rol')          // 'Psicologo' | 'PsicologoLider'
+  const rol = localStorage.getItem('rol') // 'Psicologo' | 'PsicologoLider'
   const esLider = rol === 'PsicologoLider'
   const [vista, setVista] = useState(esLider ? 'banco' : 'dashboard')
 
@@ -13,52 +14,50 @@ function PsicologoPage() {
     window.location.href = '/login'
   }
 
+  const pestanas = [
+    ...(esLider ? [{ id: 'banco', label: 'Banco de preguntas' }] : []),
+    { id: 'dashboard', label: 'Panel analítico' },
+    { id: 'lexico', label: 'Lexicón' },
+  ]
+
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header en Azul Petróleo */}
-      <div className="bg-[#0f3846] border-b border-[#0b2a35] px-8 py-4 flex items-center justify-between shadow-sm">
-        <div>
-          <h1 className="text-lg font-medium text-white">Panel del Psicólogo</h1>
-          <p className="text-xs text-cyan-100/70 mt-0.5">Configuración y análisis del sistema</p>
+    <div className="min-h-screen bg-[#F4F7F9]">
+      {/* Header */}
+      <div className="bg-[#0f3846] border-b border-[#1e5263] px-8 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="w-px h-8 bg-[#fef08a]" />
+          <div>
+            <h1 className="text-lg font-light text-white">Panel del Psicólogo{esLider ? ' Líder' : ''}</h1>
+            <p className="text-xs text-cyan-100/60 mt-0.5">Configuración y análisis del sistema</p>
+          </div>
         </div>
         <div className="flex items-center gap-6">
-          <nav className="flex gap-2">
-            {esLider && (
+          <nav className="flex gap-1">
+            {pestanas.map((p) => (
               <button
-                onClick={() => setVista('banco')}
-                className={`px-4 py-2 text-sm rounded-lg transition-colors duration-200 ${
-                  vista === 'banco'
+                key={p.id}
+                onClick={() => setVista(p.id)}
+                className={`px-4 py-2 text-sm rounded-lg transition-colors ${
+                  vista === p.id
                     ? 'bg-[#fef08a] text-[#0f3846] font-semibold'
-                    : 'text-gray-200 hover:bg-[#fef08a] hover:text-[#0f3846]'
+                    : 'text-cyan-100/70 hover:text-white hover:bg-[#0b2a35]'
                 }`}
               >
-                Banco de preguntas
+                {p.label}
               </button>
-            )}
-            <button
-              onClick={() => setVista('dashboard')}
-              className={`px-4 py-2 text-sm rounded-lg transition-colors duration-200 ${
-                vista === 'dashboard'
-                  ? 'bg-[#fef08a] text-[#0f3846] font-semibold'
-                  : 'text-gray-200 hover:bg-[#fef08a] hover:text-[#0f3846]'
-              }`}
-            >
-              Panel analítico
-            </button>
+            ))}
           </nav>
-          <button
-            onClick={cerrarSesion}
-            className="text-sm text-gray-200 hover:text-[#fef08a] transition-colors"
-          >
+          <button onClick={cerrarSesion} className="text-sm text-cyan-100/60 hover:text-white transition-colors">
             Cerrar sesión
           </button>
         </div>
       </div>
 
       {/* Contenido */}
-      <div className="max-w-5xl mx-auto px-8 py-10">
+      <div className="max-w-6xl mx-auto px-8 py-8">
         {vista === 'banco' && <BancoPreguntas />}
         {vista === 'dashboard' && <Dashboard />}
+        {vista === 'lexico' && <LexiconPanel esLider={esLider} />}
       </div>
     </div>
   )

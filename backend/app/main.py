@@ -8,7 +8,7 @@ Arquitectura: Capas con Separación Estricta de Responsabilidades
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import auth, users, evaluaciones, preguntas, diagnostico
+from app.api.routes import auth, users, evaluaciones, preguntas, diagnostico, lexico
 from app.infraestructure.db import base  # registra todos los modelos SQLAlchemy
 import os
 
@@ -38,6 +38,7 @@ app.include_router(users.router)
 app.include_router(evaluaciones.router)
 app.include_router(preguntas.router)
 app.include_router(diagnostico.router)
+app.include_router(lexico.router)
 
 @app.get("/")
 def health_check():

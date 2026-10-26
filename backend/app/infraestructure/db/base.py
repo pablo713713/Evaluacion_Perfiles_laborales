@@ -6,3 +6,4 @@ from app.infraestructure.db.models.nodo_pregunta import NodoPregunta  # noqa: F4
 from app.infraestructure.db.models.transicion_grafo import TransicionGrafo  # noqa: F401
 from app.infraestructure.db.models.respuesta_candidato import RespuestaCandicato  # noqa: F401
 from app.infraestructure.db.models.rastro_auditoria import RastroAuditoriaNLP  # noqa: F401
+from app.infraestructure.db.models.lexico_conductual import LexicoConductual  # noqa: F401

@@ -2,20 +2,15 @@ import { useState, useEffect } from 'react'
 import api from '../../services/api'
 import DetalleEvaluacion from './DetalleEvaluacion'
 import RedaccionDiagnostico from './RedaccionDiagnostico'
-
-const PERFIL_COLOR = {
-  Dominante: 'bg-red-100 text-red-700',
-  Hibrido:   'bg-blue-100 text-blue-700',
-  Sumiso:    'bg-green-100 text-green-700',
-}
+import { etiquetaPerfil, COLOR_PERFIL_BG, COLOR_PERFIL_TEXT, PALETA } from '../../utils/perfiles'
 
 function Dashboard() {
   const [evaluaciones, setEvaluaciones] = useState([])
-  const [cargando, setCargando]         = useState(true)
-  const [vista, setVista]               = useState('lista')   // lista | detalle | diagnostico
+  const [cargando, setCargando] = useState(true)
+  const [vista, setVista] = useState('lista') // lista | detalle | diagnostico
   const [idSeleccionado, setIdSeleccionado] = useState(null)
   const [mensajeExito, setMensajeExito] = useState('')
-  const [errores, setErrores]           = useState([])
+  const [errores, setErrores] = useState([])
 
   useEffect(() => { cargar() }, [])
 
@@ -43,85 +38,82 @@ function Dashboard() {
     }
   }
 
-  if (vista === 'detalle')     return <DetalleEvaluacion id={idSeleccionado} onVolver={volver} />
+  if (vista === 'detalle') return <DetalleEvaluacion id={idSeleccionado} onVolver={volver} />
   if (vista === 'diagnostico') return <RedaccionDiagnostico id={idSeleccionado} onVolver={volver} />
 
+  const pendientes = evaluaciones.filter((e) => !e.tiene_diagnostico).length
+
   return (
-    <div className="w-full px-4 sm:px-6 lg:px-8">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-sm font-medium text-gray-600 uppercase tracking-widest">
-          Evaluaciones completadas ({evaluaciones.length})
-        </h2>
+    <div className="w-full">
+      {/* Resumen */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="rounded-2xl px-5 py-4 text-white" style={{ backgroundColor: PALETA.navyOscuro, border: `1px solid ${PALETA.borde}` }}>
+          <p className="text-xs uppercase tracking-widest text-cyan-100/60">Evaluaciones completadas</p>
+          <p className="text-3xl font-light mt-1">{evaluaciones.length}</p>
+        </div>
+        <div className="rounded-2xl px-5 py-4 bg-white border border-gray-100 shadow-sm">
+          <p className="text-xs uppercase tracking-widest" style={{ color: PALETA.borde }}>Informes pendientes</p>
+          <p className="text-3xl font-light mt-1" style={{ color: PALETA.navy }}>{pendientes}</p>
+        </div>
       </div>
+
+      {mensajeExito && <div className="mb-4 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">{mensajeExito}</div>}
+      {errores.map((e, i) => <div key={i} className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">{e}</div>)}
 
       {cargando ? (
         <div className="text-center py-10 text-sm text-gray-400">Cargando evaluaciones...</div>
       ) : evaluaciones.length === 0 ? (
-        <div className="text-center py-10 text-sm text-gray-400">
-          No hay evaluaciones completadas aún.
-        </div>
+        <div className="text-center py-10 text-sm text-gray-400">No hay evaluaciones completadas aún.</div>
       ) : (
-        <div className="bg-white border border-gray-100 rounded-xl shadow-sm overflow-x-auto w-full">
+        <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-x-auto w-full">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-gray-100">
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Candidato</th>
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Fecha</th>
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Duración</th>
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Perfil sistema</th>
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Confianza</th>
-                <th className="px-5 py-3 text-xs font-medium text-gray-400 uppercase tracking-wider whitespace-nowrap">Diagnóstico</th>
-                <th className="px-5 py-3 text-right"></th>
+              <tr style={{ backgroundColor: '#F0F7F9' }}>
+                {['Candidato', 'Fecha', 'Duración', 'Perfil sistema', 'Confianza', 'Diagnóstico'].map((h) => (
+                  <th key={h} className="px-5 py-3 text-xs font-semibold uppercase tracking-wider whitespace-nowrap" style={{ color: PALETA.borde }}>{h}</th>
+                ))}
+                <th className="px-5 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
               {evaluaciones.map((ev) => (
-                <tr key={ev.id_evaluacion} className="hover:bg-gray-50 transition-colors">
+                <tr key={ev.id_evaluacion} className="hover:bg-[#F7FBFC] transition-colors">
                   <td className="px-5 py-4 whitespace-nowrap">
                     <p className="text-sm font-medium text-gray-800">{ev.candidato.nombre}</p>
                     <p className="text-xs text-gray-400">{ev.candidato.correo}</p>
                   </td>
                   <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">
-                    {ev.fecha_fin ? new Date(ev.fecha_fin).toLocaleDateString('es-BO') : '—'}
+                    {ev.fecha_fin ? new Date(ev.fecha_fin).toLocaleString('es-BO', { dateStyle: 'short', timeStyle: 'short' }) : '—'}
                   </td>
-                  <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">
-                    {ev.duracion_minutos ? `${ev.duracion_minutos} min` : '—'}
-                  </td>
+                  <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{ev.duracion_minutos ? `${ev.duracion_minutos} min` : '—'}</td>
                   <td className="px-5 py-4 whitespace-nowrap">
                     {ev.perfil_sistema ? (
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${PERFIL_COLOR[ev.perfil_sistema] || 'bg-gray-100 text-gray-600'}`}>
-                        {ev.perfil_sistema}
+                      <span className="px-2 py-1 rounded text-xs font-semibold"
+                        style={{ backgroundColor: COLOR_PERFIL_BG[ev.perfil_sistema] || '#F3F4F6', color: COLOR_PERFIL_TEXT[ev.perfil_sistema] || '#4B5563' }}>
+                        {etiquetaPerfil(ev.perfil_sistema)}
                       </span>
                     ) : '—'}
                   </td>
-                  <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">
-                    {ev.confianza ? `${ev.confianza}%` : '—'}
-                  </td>
+                  <td className="px-5 py-4 text-sm text-gray-500 whitespace-nowrap">{ev.confianza ? `${ev.confianza}%` : '—'}</td>
                   <td className="px-5 py-4 whitespace-nowrap">
-                    {ev.tiene_diagnostico ? (
-                      <span className="text-xs text-green-600 font-medium">Redactado</span>
-                    ) : (
-                      <span className="text-xs text-gray-400">Pendiente</span>
-                    )}
+                    {ev.tiene_diagnostico
+                      ? <span className="text-xs font-semibold px-2 py-1 rounded-full bg-green-50 text-green-700">Redactado</span>
+                      : <span className="text-xs font-semibold px-2 py-1 rounded-full bg-amber-50 text-amber-700">Pendiente</span>}
                   </td>
                   <td className="px-5 py-4 text-right whitespace-nowrap">
                     <div className="flex gap-2 justify-end items-center">
-                      <button
-                        onClick={() => verDetalle(ev.id_evaluacion)}
-                        className="text-xs text-gray-600 hover:text-gray-900 border border-gray-200 rounded-lg px-3 py-1.5 transition-colors"
-                      >
+                      <button onClick={() => verDetalle(ev.id_evaluacion)}
+                        className="text-xs border rounded-lg px-3 py-1.5 transition-colors hover:bg-[#F0F7F9]"
+                        style={{ color: PALETA.navy, borderColor: '#CFE3E8' }}>
                         Ver detalle
                       </button>
-                      <button
-                        onClick={() => habilitarRepeticion(ev.id_evaluacion, ev.candidato.nombre)}
-                        className="text-xs text-orange-400 hover:text-orange-600 border border-orange-100 rounded-lg px-3 py-1.5 transition-colors"
-                      >
+                      <button onClick={() => habilitarRepeticion(ev.id_evaluacion, ev.candidato.nombre)}
+                        className="text-xs text-orange-500 hover:text-orange-700 border border-orange-100 rounded-lg px-3 py-1.5 transition-colors">
                         Repetir test
                       </button>
-                      <button
-                        onClick={() => verDiagnostico(ev.id_evaluacion)}
-                        className="text-xs text-white bg-gray-700 hover:bg-gray-600 rounded-lg px-3 py-1.5 transition-colors"
-                      >
+                      <button onClick={() => verDiagnostico(ev.id_evaluacion)}
+                        className="text-xs font-semibold rounded-lg px-3 py-1.5 transition-colors"
+                        style={{ backgroundColor: PALETA.navy, color: PALETA.acento }}>
                         Redactar informe
                       </button>
                     </div>

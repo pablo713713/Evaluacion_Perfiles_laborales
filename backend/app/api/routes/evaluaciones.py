@@ -1,3 +1,4 @@
+from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -21,6 +22,8 @@ class RespuestaBody(BaseModel):
     id_nodo: int
     texto: str
     tiempo_segundos: int = 0
+    # Cómo respondió el candidato: escrita, dictada por voz o ambas
+    modalidad: Literal["texto", "voz", "mixta"] = "texto"
 
 
 @router.post("/iniciar")
@@ -96,7 +99,8 @@ def responder(id_evaluacion: int, body: RespuestaBody,
         raise HTTPException(status_code=404, detail="Evaluación no encontrada")
     if ev.id_usuario_candidato != candidato.id_usuario:
         raise HTTPException(status_code=403, detail="Esta evaluación no le pertenece")
-    return procesar_respuesta(db, id_evaluacion, body.id_nodo, body.texto, body.tiempo_segundos)
+    return procesar_respuesta(db, id_evaluacion, body.id_nodo, body.texto, body.tiempo_segundos,
+                              modalidad=body.modalidad)
 
 
 @router.get("/{id_evaluacion}")

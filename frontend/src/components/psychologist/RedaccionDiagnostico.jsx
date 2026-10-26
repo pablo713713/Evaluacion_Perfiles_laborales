@@ -1,101 +1,117 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import api from '../../services/api'
+import {
+  PERFILES, etiquetaPerfil, COLOR_PERFIL_BG, COLOR_PERFIL_TEXT, COLOR_MANUAL, COLOR_ALERTA, PALETA,
+  calcularPolaridad, reconstruirAlertas, formatoFechaHora,
+} from '../../utils/perfiles'
+import { construirGraficas } from './Graficos'
 
-const PERFILES = ['Dominante', 'Hibrido', 'Sumiso']
-const PIE_COLORS = { Dominante: '#EF4444', Hibrido: '#3B82F6', Sumiso: '#10B981' }
+// ── Utilidades para el PDF ───────────────────────────────────────────────────
+const hexARgb = (hex) => [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16))
+const NAVY = hexARgb(PALETA.navy)
+const ACENTO = hexARgb(PALETA.acento)
+const BORDE = hexARgb(PALETA.borde)
 
-// ── Gráfico de torta SVG reutilizable ────────────────────────────────────────
-function MiniTorta({ slices, size = 100, label }) {
-  const total = slices.reduce((s, d) => s + (d.valor || 0), 0)
-  if (total === 0) return null
-  let startAngle = -Math.PI / 2
-  const paths = slices.map(d => {
-    const angle = (d.valor / total) * 2 * Math.PI
-    const x1 = size/2 + (size/2 - 4) * Math.cos(startAngle)
-    const y1 = size/2 + (size/2 - 4) * Math.sin(startAngle)
-    startAngle += angle
-    const x2 = size/2 + (size/2 - 4) * Math.cos(startAngle)
-    const y2 = size/2 + (size/2 - 4) * Math.sin(startAngle)
-    const large = angle > Math.PI ? 1 : 0
-    return { path: `M${size/2},${size/2} L${x1},${y1} A${size/2-4},${size/2-4} 0 ${large},1 ${x2},${y2} Z`, color: d.color }
-  })
-  return (
-    <div className="flex flex-col items-center gap-1">
-      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        {paths.map((p, i) => (
-          <path key={i} d={p.path} fill={p.color} stroke="white" strokeWidth="1.5" />
-        ))}
-      </svg>
-      {label && <span className="text-xs text-gray-400">{label}</span>}
+// Convierte un <svg> del DOM en PNG (lo que se ve en pantalla es lo que va al PDF)
+const svgAPng = (svg, escala = 3) => new Promise((resolve, reject) => {
+  const vb = svg.viewBox.baseVal
+  const w = vb && vb.width ? vb.width : svg.clientWidth
+  const h = vb && vb.height ? vb.height : svg.clientHeight
+  const clon = svg.cloneNode(true)
+  clon.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+  clon.setAttribute('width', w)
+  clon.setAttribute('height', h)
+  clon.removeAttribute('style')
+  const img = new Image()
+  img.onload = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = w * escala
+    canvas.height = h * escala
+    const ctx = canvas.getContext('2d')
+    ctx.fillStyle = '#FFFFFF'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
+    resolve({ url: canvas.toDataURL('image/png'), w, h })
+  }
+  img.onerror = () => reject(new Error('No se pudo convertir la gráfica'))
+  img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(clon))
+})
+
+// Carga jsPDF desde CDN (UMD) si no está ya en window
+const cargarJsPDF = () => new Promise((resolve, reject) => {
+  if (window.jspdf) { resolve(window.jspdf.jsPDF); return }
+  const s = document.createElement('script')
+  s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+  s.onload = () => (window.jspdf ? resolve(window.jspdf.jsPDF) : reject(new Error('jsPDF no disponible')))
+  s.onerror = () => reject(new Error('No se pudo cargar jsPDF'))
+  document.head.appendChild(s)
+})
+
+const Seccion = ({ titulo, children, extra }) => (
+  <div className="bg-white border border-gray-100 rounded-2xl shadow-sm p-6 mb-4">
+    <div className="flex items-center justify-between mb-4">
+      <h3 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest" style={{ color: PALETA.navy }}>
+        <span className="w-1 h-4 rounded-full" style={{ backgroundColor: PALETA.acento }} />
+        {titulo}
+      </h3>
+      {extra}
     </div>
-  )
-}
+    {children}
+  </div>
+)
 
 function RedaccionDiagnostico({ id, onVolver }) {
-  const [datos, setDatos]           = useState(null)
-  const [texto, setTexto]           = useState('')
-  const [espectro, setEspectro]     = useState('')
-  const [guardando, setGuardando]   = useState(false)
-  const [exito, setExito]           = useState('')
-  const [error, setError]           = useState('')
-  const [cargando, setCargando]     = useState(true)
+  const [datos, setDatos] = useState(null)
+  const [fechaEvaluacion, setFechaEvaluacion] = useState(null)
+  const [texto, setTexto] = useState('')
+  const [espectro, setEspectro] = useState('')
+  const [guardando, setGuardando] = useState(false)
+  const [exito, setExito] = useState('')
+  const [error, setError] = useState('')
+  const [cargando, setCargando] = useState(true)
   const [generandoPDF, setGenerandoPDF] = useState(false)
   const [distribucion, setDistribucion] = useState(null)
-  const [distHibrida, setDistHibrida]   = useState(null)
-  const [historial, setHistorial]       = useState([])   // respuestas completas con rastros
-  const [evidencias, setEvidencias]     = useState([])   // { idRespuesta, pregunta, respuesta, rastros, nota }
-  const [respuestaSelec, setRespuestaSelec] = useState('')  // id_respuesta seleccionado en el combo
-  const [notaEvidencia, setNotaEvidencia]   = useState('')
+  const [historial, setHistorial] = useState([])
+  const [evidencias, setEvidencias] = useState([])
+  const [respuestaSelec, setRespuestaSelec] = useState('')
+  const [notaEvidencia, setNotaEvidencia] = useState('')
+  const graficasRef = useRef(null)
 
   useEffect(() => {
-    let cancelled = false
+    let cancelado = false
     const cargar = async () => {
       try {
         const [rDiag, rDetalle] = await Promise.all([
           api.get(`/api/diagnostico/evaluaciones/${id}/diagnostico`),
           api.get(`/api/diagnostico/evaluaciones/${id}/detalle`),
         ])
-        if (cancelled) return
+        if (cancelado) return
         setDatos(rDiag.data)
         setTexto(rDiag.data.texto_diagnostico || '')
         setEspectro(rDiag.data.espectro_confirmado || rDiag.data.perfil_sistema || 'Dominante')
-
+        setFechaEvaluacion(rDetalle.data.fecha_fin || null)
         const hist = rDetalle.data.historial || []
         setHistorial(hist)
-        if (hist.length > 0) {
-          const ultima = hist[hist.length - 1].distribucion_tras_respuesta
-          setDistribucion(ultima)
-
-          // Calcular distribución híbrida igual que en DetalleEvaluacion
-          const d = ultima.Dominante
-          const h = ultima.Hibrido
-          const s = ultima.Sumiso
-          const esHibrido = (d >= 30 && s >= 30) || (h >= 60)
-          if (esHibrido) {
-            const totalPolar = d + s
-            setDistHibrida(totalPolar > 0
-              ? { Dominante: parseFloat((d / totalPolar * 100).toFixed(1)), Sumiso: parseFloat((s / totalPolar * 100).toFixed(1)) }
-              : { Dominante: 50, Sumiso: 50 }
-            )
-          }
-        }
+        if (hist.length > 0) setDistribucion(hist[hist.length - 1].distribucion_tras_respuesta)
+      } catch {
+        if (!cancelado) setError('Error al cargar los datos del informe.')
       } finally {
-        if (!cancelled) setCargando(false)
+        if (!cancelado) setCargando(false)
       }
     }
     cargar()
-    return () => { cancelled = true }
+    return () => { cancelado = true }
   }, [id])
+
+  const polaridad = calcularPolaridad(distribucion)
+  const alertas = reconstruirAlertas(historial)
+  const graficas = construirGraficas({ dist: distribucion, polaridad, alertas, historial })
 
   const guardar = async () => {
     if (!texto.trim()) { setError('El diagnóstico no puede estar vacío.'); return }
-    setGuardando(true)
-    setError('')
+    setGuardando(true); setError('')
     try {
-      await api.post(`/api/diagnostico/evaluaciones/${id}/diagnostico`, {
-        texto_diagnostico: texto,
-        espectro_confirmado: espectro,
-      })
+      await api.post(`/api/diagnostico/evaluaciones/${id}/diagnostico`, { texto_diagnostico: texto, espectro_confirmado: espectro })
       setExito('Diagnóstico guardado correctamente.')
       setTimeout(() => setExito(''), 3000)
     } catch {
@@ -107,484 +123,235 @@ function RedaccionDiagnostico({ id, onVolver }) {
 
   const agregarEvidencia = () => {
     if (!respuestaSelec) return
-    const item = historial.find(h => String(h.id_respuesta) === String(respuestaSelec))
+    const item = historial.find((h) => String(h.id_respuesta) === String(respuestaSelec))
     if (!item) return
-    // Evitar duplicados — si ya está agregada, solo actualizar la nota
-    setEvidencias(prev => {
-      const existe = prev.findIndex(e => String(e.idRespuesta) === String(respuestaSelec))
-      if (existe !== -1) {
+    setEvidencias((prev) => {
+      const i = prev.findIndex((e) => String(e.idRespuesta) === String(respuestaSelec))
+      if (i !== -1) {
         const copia = [...prev]
-        copia[existe] = { ...copia[existe], nota: notaEvidencia.trim() }
+        copia[i] = { ...copia[i], nota: notaEvidencia.trim() }
         return copia
       }
-      return [...prev, {
-        idRespuesta: item.id_respuesta,
-        pregunta:   item.pregunta,
-        respuesta:  item.texto_respuesta,
-        rastros:    item.rastro_lexico || [],
-        nota:       notaEvidencia.trim(),
-      }]
+      return [...prev, { idRespuesta: item.id_respuesta, pregunta: item.pregunta, respuesta: item.texto_respuesta,
+        rastros: item.rastro_lexico || [], nota: notaEvidencia.trim() }]
     })
-    setNotaEvidencia('')
-    setRespuestaSelec('')
+    setNotaEvidencia(''); setRespuestaSelec('')
   }
 
-  const eliminarEvidencia = (idx) => {
-    setEvidencias(prev => prev.filter((_, i) => i !== idx))
-  }
-
-  const dibujarTortaEnCanvas = (slices, size = 200) => {
-    const canvas = document.createElement('canvas')
-    canvas.width = size
-    canvas.height = size
-    const ctx = canvas.getContext('2d')
-    const cx = size / 2, cy = size / 2, r = size / 2 - 4
-    const total = slices.reduce((s, d) => s + d.valor, 0)
-    if (total === 0) return null
-    let startAngle = -Math.PI / 2
-    slices.forEach(d => {
-      const angle = (d.valor / total) * 2 * Math.PI
-      ctx.beginPath()
-      ctx.moveTo(cx, cy)
-      ctx.arc(cx, cy, r, startAngle, startAngle + angle)
-      ctx.closePath()
-      ctx.fillStyle = d.color
-      ctx.fill()
-      ctx.strokeStyle = '#fff'
-      ctx.lineWidth = 2
-      ctx.stroke()
-      startAngle += angle
-    })
-    return canvas.toDataURL('image/png')
-  }
-
-  // Carga jsPDF desde CDN como script clásico (UMD) si no está ya en window
-  const cargarJsPDF = () => new Promise((resolve, reject) => {
-    if (window.jspdf) { resolve(window.jspdf.jsPDF); return }
-    const script = document.createElement('script')
-    script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
-    script.onload = () => {
-      if (window.jspdf) resolve(window.jspdf.jsPDF)
-      else reject(new Error('jsPDF no disponible tras carga'))
-    }
-    script.onerror = () => reject(new Error('No se pudo cargar jsPDF'))
-    document.head.appendChild(script)
-  })
-
+  // ── Exportación PDF ────────────────────────────────────────────────────────
   const exportarPDF = async () => {
     if (!texto.trim()) { setError('Guarde el diagnóstico antes de exportar.'); return }
-    setGenerandoPDF(true)
+    setGenerandoPDF(true); setError('')
     try {
       const JsPDF = await cargarJsPDF()
-      const doc = new JsPDF()
-
-      const fechaDiagnostico = new Date().toLocaleDateString('es-BO', {
-        year: 'numeric', month: 'long', day: 'numeric'
+      const doc = new JsPDF({ unit: 'mm', format: 'a4' })
+      const ANCHO = 210, ALTO = 297, M = 18, UTIL = ANCHO - 2 * M
+      const LIMITE = ALTO - 22
+      const emision = new Date().toLocaleString('es-BO', {
+        year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit',
       })
+      let y = 0
 
-      // Encabezado
-      doc.setFontSize(16)
-      doc.setFont('helvetica', 'bold')
-      doc.text('Informe de Diagnóstico Psicológico Laboral', 20, 20)
+      const nuevaPagina = () => { doc.addPage(); y = 20 }
+      const espacio = (mm) => { if (y + mm > LIMITE) nuevaPagina() }
+      const tituloSeccion = (t) => {
+        espacio(16)
+        doc.setFillColor(...ACENTO); doc.rect(M, y - 4, 1.6, 6, 'F')
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(12); doc.setTextColor(...NAVY)
+        doc.text(t, M + 4, y + 0.6)
+        y += 8
+      }
 
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'normal')
-      doc.setTextColor(120)
-      doc.text('Sistema de Evaluación de Perfiles Laborales — NLP Adaptativo', 20, 28)
-      doc.setTextColor(0)
+      // Encabezado con color
+      doc.setFillColor(...NAVY); doc.rect(0, 0, ANCHO, 34, 'F')
+      doc.setFillColor(...ACENTO); doc.rect(0, 34, ANCHO, 1.4, 'F')
+      doc.setTextColor(255, 255, 255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16)
+      doc.text('Informe de Diagnóstico Psicológico Laboral', M, 15)
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(207, 250, 254)
+      doc.text('Sistema de Evaluación de Perfiles Laborales — NLP Adaptativo', M, 22)
+      doc.setTextColor(...ACENTO)
+      doc.text(`Emitido: ${emision}`, ANCHO - M, 29, { align: 'right' })
+      y = 46
 
-      // Línea separadora
-      doc.setDrawColor(200)
-      doc.line(20, 32, 190, 32)
+      // Datos del candidato en tarjeta
+      tituloSeccion('Datos de la evaluación')
+      const filas = [
+        ['Candidato', datos?.candidato_nombre || '—'],
+        ['Psicólogo evaluador', datos?.psicologo_nombre || '—'],
+        ['Fecha y hora de la evaluación', formatoFechaHora(fechaEvaluacion)],
+        ['Fecha y hora de emisión', emision],
+        ['Perfil detectado por el sistema', etiquetaPerfil(datos?.perfil_sistema)],
+        ['Espectro confirmado por el psicólogo', etiquetaPerfil(espectro)],
+      ]
+      const altoTarjeta = Math.ceil(filas.length / 2) * 13 + 6
+      doc.setFillColor(241, 247, 249); doc.setDrawColor(220, 235, 239)
+      doc.roundedRect(M, y, UTIL, altoTarjeta, 2.5, 2.5, 'FD')
+      filas.forEach(([k, v], i) => {
+        const x = M + 6 + (i % 2) * (UTIL / 2)
+        const fy = y + 8 + Math.floor(i / 2) * 13
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(8); doc.setTextColor(...BORDE)
+        doc.text(k.toUpperCase(), x, fy)
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(10.5); doc.setTextColor(31, 41, 55)
+        doc.text(doc.splitTextToSize(String(v), UTIL / 2 - 10)[0], x, fy + 5.5)
+      })
+      y += altoTarjeta + 10
 
-      // Datos del encabezado
-      doc.setFontSize(11)
-      doc.setFont('helvetica', 'bold')
-      doc.text('Datos del Candidato', 20, 42)
-
-      doc.setFont('helvetica', 'normal')
-      doc.setFontSize(10)
-      doc.text(`Nombre del candidato:`, 20, 52)
-      doc.setFont('helvetica', 'bold')
-      doc.text(datos?.candidato_nombre || '', 75, 52)
-
-      doc.setFont('helvetica', 'normal')
-      doc.text(`Psicólogo evaluador:`, 20, 60)
-      doc.setFont('helvetica', 'bold')
-      doc.text(datos?.psicologo_nombre || '', 75, 60)
-
-      doc.setFont('helvetica', 'normal')
-      doc.text(`Fecha del diagnóstico:`, 20, 68)
-      doc.setFont('helvetica', 'bold')
-      doc.text(fechaDiagnostico, 75, 68)
-
-      doc.setFont('helvetica', 'normal')
-      doc.text(`Perfil detectado por sistema:`, 20, 76)
-      doc.setFont('helvetica', 'bold')
-      doc.text(datos?.perfil_sistema || '', 90, 76)
-
-      doc.setFont('helvetica', 'normal')
-      doc.text(`Espectro confirmado por psicólogo:`, 20, 84)
-      doc.setFont('helvetica', 'bold')
-      doc.text(espectro, 100, 84)
-
-      // Línea separadora
-      doc.setDrawColor(200)
-      doc.line(20, 90, 190, 90)
+      // Gráficas (todas las que tenga el candidato), justo después de los datos
+      const nodos = graficasRef.current ? [...graficasRef.current.querySelectorAll('[data-pdf-grafica]')] : []
+      if (nodos.length) {
+        tituloSeccion('Perfil conductual')
+        for (const nodo of nodos) {
+          const svg = nodo.querySelector('svg')
+          if (!svg) continue
+          const { url, w, h } = await svgAPng(svg)
+          let wmm = Math.min(125, UTIL)
+          let hmm = (h / w) * wmm
+          if (hmm > 72) { hmm = 72; wmm = (w / h) * hmm }
+          espacio(hmm + 12)
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(55, 65, 81)
+          doc.text(nodo.dataset.titulo || '', M, y)
+          y += 3
+          doc.setDrawColor(229, 231, 235)
+          doc.roundedRect(M, y, UTIL, hmm + 6, 2, 2, 'S')
+          doc.addImage(url, 'PNG', M + (UTIL - wmm) / 2, y + 3, wmm, hmm)
+          y += hmm + 13
+        }
+      }
 
       // Diagnóstico
-      doc.setFontSize(11)
-      doc.setFont('helvetica', 'bold')
-      doc.text('Diagnóstico Clínico', 20, 100)
+      tituloSeccion('Diagnóstico clínico')
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(31, 41, 55)
+      doc.splitTextToSize(texto, UTIL).forEach((linea) => { espacio(5.2); doc.text(linea, M, y); y += 5.2 })
+      y += 6
 
-      doc.setFontSize(10)
-      doc.setFont('helvetica', 'normal')
-      const lineas = doc.splitTextToSize(texto, 170)
-      doc.text(lineas, 20, 110)
-
-      // Calcular yPos dinámico según cuántas líneas ocupa el diagnóstico
-      let yPos = 110 + lineas.length * 5 + 14
-
-      // Sección de distribución conductual
-      if (distribucion) {
-        // Verificar si hay espacio en la página o si hay que agregar nueva página
-        if (yPos > 220) { doc.addPage(); yPos = 20 }
-
-        doc.setDrawColor(200)
-        doc.line(20, yPos, 190, yPos)
-        yPos += 10
-
-        doc.setFontSize(11)
-        doc.setFont('helvetica', 'bold')
-        doc.text('Distribución Conductual', 20, yPos)
-        yPos += 8
-
-        // Torta principal (D/H/S)
-        const slicesPrincipal = [
-          { valor: distribucion.Dominante || 0, color: '#EF4444' },
-          { valor: distribucion.Hibrido   || 0, color: '#3B82F6' },
-          { valor: distribucion.Sumiso    || 0, color: '#10B981' },
-        ]
-        const imgPrincipal = dibujarTortaEnCanvas(slicesPrincipal, 160)
-        if (imgPrincipal) {
-          doc.addImage(imgPrincipal, 'PNG', 20, yPos, 40, 40)
-        }
-
-        // Leyenda al lado de la torta principal
-        doc.setFontSize(9)
-        const legendaX = 65
-        const leyendas = [
-          { label: 'Dominante', valor: distribucion.Dominante || 0, color: [239, 68, 68] },
-          { label: 'Híbrido',   valor: distribucion.Hibrido   || 0, color: [59, 130, 246] },
-          { label: 'Sumiso',    valor: distribucion.Sumiso    || 0, color: [16, 185, 129] },
-        ]
-        leyendas.forEach((l, i) => {
-          const ly = yPos + 6 + i * 10
-          doc.setFillColor(...l.color)
-          doc.rect(legendaX, ly - 3, 4, 4, 'F')
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0)
-          doc.text(`${l.label}: ${l.valor}%`, legendaX + 6, ly)
-        })
-
-        // Torta híbrida si aplica
-        if (distHibrida) {
-          const slicesHibrida = [
-            { valor: distHibrida.Dominante || 0, color: '#EF4444' },
-            { valor: distHibrida.Sumiso    || 0, color: '#10B981' },
-          ]
-          const imgHibrida = dibujarTortaEnCanvas(slicesHibrida, 120)
-          if (imgHibrida) {
-            doc.addImage(imgHibrida, 'PNG', 120, yPos, 30, 30)
-          }
-          doc.setFontSize(8)
-          doc.setFont('helvetica', 'italic')
-          doc.setTextColor(100)
-          doc.text('Polaridad interna D/S', 120, yPos + 34)
-          doc.setTextColor(0)
-        }
-
-        yPos += 50
-      }
-
-      // Sección de evidencias clínicas seleccionadas
+      // Evidencia clínica
       if (evidencias.length > 0) {
-        if (yPos > 200) { doc.addPage(); yPos = 20 }
-        doc.setDrawColor(200)
-        doc.line(20, yPos, 190, yPos)
-        yPos += 10
-
-        doc.setFontSize(11)
-        doc.setFont('helvetica', 'bold')
-        doc.text('Evidencia clínica seleccionada', 20, yPos)
-        yPos += 10
-
+        tituloSeccion('Evidencia clínica seleccionada')
         evidencias.forEach((ev, i) => {
-          if (yPos > 240) { doc.addPage(); yPos = 20 }
-
-          // Encabezado de evidencia
-          doc.setFontSize(10)
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(60)
-          doc.text(`Evidencia ${i + 1}`, 20, yPos)
-          yPos += 6
-
-          // Pregunta
-          doc.setFontSize(9)
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(100)
-          doc.text('Pregunta:', 20, yPos)
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0)
-          const lineasP = doc.splitTextToSize(ev.pregunta || '', 165)
-          doc.text(lineasP, 20, yPos + 4)
-          yPos += 4 + lineasP.length * 4 + 3
-
-          if (yPos > 250) { doc.addPage(); yPos = 20 }
-
-          // Respuesta
-          doc.setFont('helvetica', 'bold')
-          doc.setTextColor(100)
-          doc.text('Respuesta del candidato:', 20, yPos)
-          doc.setFont('helvetica', 'normal')
-          doc.setTextColor(0)
-          const lineasR = doc.splitTextToSize(ev.respuesta || '(sin respuesta)', 165)
-          doc.text(lineasR, 20, yPos + 4)
-          yPos += 4 + lineasR.length * 4 + 3
-
-          if (yPos > 250) { doc.addPage(); yPos = 20 }
-
-          // Lemas marcados
-          const todosLemas = ev.rastros.filter(r => r.origen !== 'alerta')
-          const todasAlertas = ev.rastros.filter(r => r.origen === 'alerta')
-          if (todosLemas.length > 0 || todasAlertas.length > 0) {
-            doc.setFont('helvetica', 'bold')
-            doc.setTextColor(100)
-            doc.text('Marcadores léxicos:', 20, yPos)
-            yPos += 5
-            doc.setFont('helvetica', 'normal')
-            doc.setTextColor(0)
-            const textoLemas = todosLemas.map(r => `${r.palabra} (${r.perfil}, ${r.puntos > 0 ? '+' : ''}${r.puntos})`).join('  ·  ')
-            const textoAlertas = todasAlertas.map(r => `⚠ ${r.lema || r.palabra}`).join('  ·  ')
-            const textoMarcadores = [textoLemas, textoAlertas].filter(Boolean).join('     ')
-            if (textoMarcadores) {
-              const lineasL = doc.splitTextToSize(textoMarcadores, 165)
-              doc.text(lineasL, 20, yPos)
-              yPos += lineasL.length * 4 + 3
-            }
+          espacio(24)
+          doc.setFillColor(...NAVY); doc.roundedRect(M, y - 4.5, 26, 6.5, 1.5, 1.5, 'F')
+          doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...ACENTO)
+          doc.text(`Evidencia ${i + 1}`, M + 13, y, { align: 'center' })
+          y += 7
+          const bloque = (rotulo, contenido, estilo = 'normal', color = [31, 41, 55]) => {
+            espacio(10)
+            doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); doc.setTextColor(...BORDE)
+            doc.text(rotulo, M, y); y += 4.5
+            doc.setFont('helvetica', estilo); doc.setFontSize(9.5); doc.setTextColor(...color)
+            doc.splitTextToSize(contenido, UTIL).forEach((l) => { espacio(4.6); doc.text(l, M, y); y += 4.6 })
+            y += 2
           }
-
-          // Nota clínica
-          if (ev.nota) {
-            if (yPos > 250) { doc.addPage(); yPos = 20 }
-            doc.setFont('helvetica', 'bold')
-            doc.setTextColor(100)
-            doc.text('Nota clínica:', 20, yPos)
-            doc.setFont('helvetica', 'italic')
-            doc.setTextColor(60)
-            const lineasN = doc.splitTextToSize(ev.nota, 165)
-            doc.text(lineasN, 20, yPos + 4)
-            yPos += 4 + lineasN.length * 4
-            doc.setTextColor(0)
-          }
-
-          // Separador entre evidencias
-          yPos += 4
-          if (i < evidencias.length - 1) {
-            doc.setDrawColor(220)
-            doc.line(20, yPos, 190, yPos)
-            yPos += 6
-          }
+          bloque('Pregunta', ev.pregunta || '')
+          bloque('Respuesta del candidato', ev.respuesta || '(sin respuesta)')
+          const lemas = ev.rastros.filter((r) => r.origen !== 'alerta')
+            .map((r) => `${r.palabra} (${r.origen === 'manual' ? 'manual, ' : ''}${etiquetaPerfil(r.perfil)}, ${r.puntos > 0 ? '+' : ''}${r.puntos})`)
+          const alertasEv = ev.rastros.filter((r) => r.origen === 'alerta').map((r) => `${r.palabra} [alerta: ${r.lema}]`)
+          if (lemas.length || alertasEv.length) bloque('Marcadores léxicos', [...lemas, ...alertasEv].join('   ·   '))
+          if (ev.nota) bloque('Nota clínica', ev.nota, 'italic', [75, 85, 99])
+          if (i < evidencias.length - 1) { doc.setDrawColor(229, 231, 235); doc.line(M, y, ANCHO - M, y); y += 7 }
         })
       }
 
-      // Pie de página
-      const pageHeight = doc.internal.pageSize.height
-      doc.setFontSize(8)
-      doc.setTextColor(150)
-      doc.text(
-        'Este informe fue generado como apoyo al diagnóstico clínico. El veredicto final es responsabilidad exclusiva del psicólogo evaluador.',
-        20,
-        pageHeight - 15,
-        { maxWidth: 170 }
-      )
+      // Pie de página en todas las hojas
+      const total = doc.internal.getNumberOfPages()
+      for (let p = 1; p <= total; p++) {
+        doc.setPage(p)
+        doc.setDrawColor(229, 231, 235); doc.line(M, ALTO - 16, ANCHO - M, ALTO - 16)
+        doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(140)
+        doc.text('Informe de apoyo al diagnóstico. El veredicto final es responsabilidad exclusiva del psicólogo evaluador.', M, ALTO - 11)
+        doc.text(`Página ${p} de ${total}`, ANCHO - M, ALTO - 11, { align: 'right' })
+      }
 
-      // Nombre del archivo
-      const nombreArchivo = `${(datos?.candidato_nombre || 'candidato').replace(/\s+/g, '_')}_resultado.pdf`
-      doc.save(nombreArchivo)
-
+      doc.save(`${(datos?.candidato_nombre || 'candidato').replace(/\s+/g, '_')}_informe.pdf`)
     } catch (err) {
       console.error(err)
-      setError('Error al generar el PDF. Verifique que el diagnóstico esté guardado.')
+      setError('Error al generar el PDF. Verifique su conexión e intente nuevamente.')
     } finally {
       setGenerandoPDF(false)
     }
   }
 
-  if (cargando) return (
-    <div className="text-center py-16 text-sm text-gray-400">Cargando diagnóstico...</div>
-  )
+  if (cargando) return <div className="text-center py-16 text-sm text-gray-400">Cargando diagnóstico...</div>
 
   return (
-    <div className="max-w-3xl">
-
+    <div className="max-w-4xl mx-auto">
       {/* Encabezado */}
-      <div className="flex items-center gap-4 mb-8">
-        <button
-          onClick={onVolver}
-          className="text-sm text-gray-500 hover:text-gray-700 transition-colors"
-        >
-          ← Volver
-        </button>
-        <div>
-          <h2 className="text-lg font-medium text-gray-800">
-            Redacción del informe — {datos?.candidato_nombre}
-          </h2>
-          <p className="text-xs text-gray-400 mt-0.5">
-            Psicólogo: {datos?.psicologo_nombre}
-          </p>
+      <div className="rounded-2xl px-6 py-5 mb-4 text-white" style={{ backgroundColor: PALETA.navyOscuro, border: `1px solid ${PALETA.borde}` }}>
+        <button onClick={onVolver} className="text-sm text-cyan-100/70 hover:text-white transition-colors">← Volver</button>
+        <div className="mt-3">
+          <div className="w-8 h-px mb-3" style={{ backgroundColor: PALETA.acento }} />
+          <h2 className="text-xl font-light">Redacción del informe — {datos?.candidato_nombre}</h2>
+          <p className="text-xs text-cyan-100/60 mt-1">Psicólogo: {datos?.psicologo_nombre}</p>
         </div>
       </div>
 
-      {/* Mensajes */}
-      {exito && (
-        <div className="mb-4 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">
-          {exito}
-        </div>
-      )}
-      {error && (
-        <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">
-          {error}
-        </div>
-      )}
+      {exito && <div className="mb-4 px-4 py-3 bg-green-50 border border-green-100 rounded-lg text-sm text-green-700">{exito}</div>}
+      {error && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-100 rounded-lg text-sm text-red-600">{error}</div>}
 
-      {/* Tarjeta de datos */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6 mb-4">
-        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-4">
-          Datos del diagnóstico
-        </h3>
+      {/* 1. Datos */}
+      <Seccion titulo="Datos del diagnóstico">
         <div className="grid grid-cols-2 gap-4 text-sm">
-          <div>
-            <p className="text-gray-500 text-xs mb-1">Candidato</p>
-            <p className="font-medium text-gray-800">{datos?.candidato_nombre}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs mb-1">Psicólogo evaluador</p>
-            <p className="font-medium text-gray-800">{datos?.psicologo_nombre}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs mb-1">Perfil detectado por el sistema</p>
-            <p className="font-medium text-gray-800">{datos?.perfil_sistema || '—'}</p>
-          </div>
-          <div>
-            <p className="text-gray-500 text-xs mb-1">Espectro confirmado por el psicólogo</p>
-            <select
-              value={espectro}
-              onChange={e => setEspectro(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-gray-400"
-            >
-              {PERFILES.map(p => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* Distribución conductual — gráfico de vista previa */}
-      {distribucion && (
-        <div className="bg-white border border-gray-100 rounded-xl p-6 mb-4">
-          <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-4">
-            Distribución conductual
-          </h3>
-          <div className="flex items-start gap-10 flex-wrap">
-            {/* Torta principal */}
-            <div className="flex items-center gap-6">
-              <MiniTorta
-                size={110}
-                label="Espectro general"
-                slices={[
-                  { valor: distribucion.Dominante || 0, color: PIE_COLORS.Dominante },
-                  { valor: distribucion.Hibrido   || 0, color: PIE_COLORS.Hibrido },
-                  { valor: distribucion.Sumiso    || 0, color: PIE_COLORS.Sumiso },
-                ]}
-              />
-              <div className="space-y-2">
-                {[
-                  { label: 'Dominante', color: PIE_COLORS.Dominante, val: distribucion.Dominante },
-                  { label: 'Híbrido',   color: PIE_COLORS.Hibrido,   val: distribucion.Hibrido },
-                  { label: 'Sumiso',    color: PIE_COLORS.Sumiso,     val: distribucion.Sumiso },
-                ].map(d => (
-                  <div key={d.label} className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: d.color }} />
-                    <span className="text-xs text-gray-600">{d.label}</span>
-                    <span className="text-xs font-semibold text-gray-800 ml-1">{d.val ?? 0}%</span>
-                  </div>
-                ))}
-              </div>
+          {[
+            ['Candidato', datos?.candidato_nombre],
+            ['Psicólogo evaluador', datos?.psicologo_nombre],
+            ['Fecha y hora de la evaluación', formatoFechaHora(fechaEvaluacion)],
+            ['Perfil detectado por el sistema', etiquetaPerfil(datos?.perfil_sistema)],
+          ].map(([k, v]) => (
+            <div key={k}>
+              <p className="text-xs mb-1" style={{ color: PALETA.borde }}>{k}</p>
+              <p className="font-medium text-gray-800">{v || '—'}</p>
             </div>
-
-            {/* Torta híbrida si aplica */}
-            {distHibrida && (
-              <div className="flex items-center gap-6">
-                <MiniTorta
-                  size={90}
-                  label="Polaridad D/S"
-                  slices={[
-                    { valor: distHibrida.Dominante || 0, color: PIE_COLORS.Dominante },
-                    { valor: distHibrida.Sumiso    || 0, color: PIE_COLORS.Sumiso },
-                  ]}
-                />
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PIE_COLORS.Dominante }} />
-                    <span className="text-xs text-gray-600">Dominante</span>
-                    <span className="text-xs font-semibold text-gray-800 ml-1">{distHibrida.Dominante}%</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: PIE_COLORS.Sumiso }} />
-                    <span className="text-xs text-gray-600">Sumiso</span>
-                    <span className="text-xs font-semibold text-gray-800 ml-1">{distHibrida.Sumiso}%</span>
-                  </div>
-                  <p className="text-xs text-gray-400 italic mt-1">Polaridad interna del perfil híbrido</p>
-                </div>
-              </div>
-            )}
+          ))}
+          <div className="col-span-2">
+            <p className="text-xs mb-1" style={{ color: PALETA.borde }}>Espectro confirmado por el psicólogo</p>
+            <div className="flex gap-2">
+              {PERFILES.map((p) => {
+                const on = espectro === p
+                return (
+                  <button key={p} onClick={() => setEspectro(p)}
+                    className="flex-1 px-3 py-2 rounded-lg text-sm font-semibold border transition-all"
+                    style={on
+                      ? { backgroundColor: COLOR_PERFIL_BG[p], color: COLOR_PERFIL_TEXT[p], borderColor: COLOR_PERFIL_TEXT[p] }
+                      : { backgroundColor: '#FFFFFF', color: '#6B7280', borderColor: '#E5E7EB' }}>
+                    {etiquetaPerfil(p)}
+                  </button>
+                )
+              })}
+            </div>
           </div>
         </div>
+      </Seccion>
+
+      {/* 2. Gráficas: todas las del candidato (también van al PDF) */}
+      {graficas.length > 0 && (
+        <Seccion titulo={`Perfil conductual — ${graficas.length} gráfica${graficas.length > 1 ? 's' : ''}`}>
+          <div ref={graficasRef} className="grid md:grid-cols-2 gap-4">
+            {graficas.map((g) => (
+              <div key={g.id} data-pdf-grafica data-titulo={g.titulo} className="rounded-xl border border-gray-100 p-4">
+                <p className="text-sm font-semibold text-gray-700">{g.titulo}</p>
+                <p className="text-xs text-gray-400 mb-3">{g.descripcion}</p>
+                {g.render()}
+              </div>
+            ))}
+          </div>
+          <p className="text-xs text-gray-400 mt-3">Estas gráficas se incluyen en el informe PDF, después de los datos y antes del diagnóstico.</p>
+        </Seccion>
       )}
 
-      {/* Área de diagnóstico */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6 mb-4">
-        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-3">
-          Diagnóstico clínico
-        </h3>
-        <textarea
-          value={texto}
-          onChange={e => setTexto(e.target.value)}
-          rows={12}
+      {/* 3. Diagnóstico */}
+      <Seccion titulo="Diagnóstico clínico">
+        <textarea value={texto} onChange={(e) => setTexto(e.target.value)} rows={12}
           placeholder="Redacte aquí el diagnóstico clínico del candidato basándose en los datos del sistema y su criterio profesional..."
-          className="w-full border border-gray-200 rounded-lg px-4 py-3 text-sm focus:outline-none focus:border-gray-400 resize-none leading-relaxed"
-        />
-        <p className="text-xs text-gray-400 mt-2">
-          Este diagnóstico es editable en cualquier momento. El sistema preserva la última versión guardada.
-        </p>
-      </div>
+          className="w-full border border-gray-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-[#1e5263] resize-none leading-relaxed" />
+        <p className="text-xs text-gray-400 mt-2">Editable en cualquier momento. El sistema conserva la última versión guardada.</p>
+      </Seccion>
 
-      {/* Sección de evidencias */}
-      <div className="bg-white border border-gray-100 rounded-xl p-6 mb-4">
-        <h3 className="text-xs font-medium text-gray-400 uppercase tracking-widest mb-4">
-          Evidencia clínica seleccionada
-        </h3>
-
-        {/* Selector de respuesta */}
+      {/* 4. Evidencias */}
+      <Seccion titulo="Evidencia clínica seleccionada">
         <div className="flex flex-col gap-2 mb-5">
           <div className="flex gap-2">
-            <select
-              value={respuestaSelec}
-              onChange={e => setRespuestaSelec(e.target.value)}
-              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400 text-gray-700"
-            >
+            <select value={respuestaSelec} onChange={(e) => setRespuestaSelec(e.target.value)}
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1e5263] text-gray-700">
               <option value="">— Seleccione una pregunta como evidencia —</option>
               {historial.map((h, i) => (
                 <option key={h.id_respuesta} value={h.id_respuesta}>
@@ -592,142 +359,83 @@ function RedaccionDiagnostico({ id, onVolver }) {
                 </option>
               ))}
             </select>
-            <button
-              onClick={agregarEvidencia}
-              disabled={!respuestaSelec}
-              className="px-4 py-2 bg-gray-700 text-white text-sm rounded-lg hover:bg-gray-600 disabled:opacity-40 transition-colors whitespace-nowrap"
-            >
+            <button onClick={agregarEvidencia} disabled={!respuestaSelec}
+              className="px-4 py-2 text-sm rounded-lg font-semibold disabled:opacity-40 whitespace-nowrap"
+              style={{ backgroundColor: PALETA.navy, color: PALETA.acento }}>
               + Agregar
             </button>
           </div>
           {respuestaSelec && (
-            <input
-              type="text"
-              value={notaEvidencia}
-              onChange={e => setNotaEvidencia(e.target.value)}
+            <input value={notaEvidencia} onChange={(e) => setNotaEvidencia(e.target.value)}
               placeholder="Nota clínica sobre esta respuesta (opcional)..."
-              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-gray-400"
-              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarEvidencia() } }}
-            />
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); agregarEvidencia() } }}
+              className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#1e5263]" />
           )}
         </div>
 
-        {/* Cards de evidencias agregadas */}
         {evidencias.length === 0 ? (
           <p className="text-xs text-gray-400 text-center py-4 border border-dashed border-gray-200 rounded-lg">
             Sin evidencias seleccionadas. Elija respuestas relevantes para incluirlas en el informe.
           </p>
         ) : (
           <div className="space-y-4">
-            {evidencias.map((ev, i) => {
-              const rastrosAuto   = ev.rastros.filter(r => r.origen !== 'manual' && r.origen !== 'alerta')
-              const rastrosManuales = ev.rastros.filter(r => r.origen === 'manual')
-              const rastrosAlerta = ev.rastros.filter(r => r.origen === 'alerta')
-              return (
-                <div key={i} className="border border-gray-100 rounded-xl overflow-hidden">
-                  {/* Encabezado de la evidencia */}
-                  <div className="flex items-center justify-between px-4 py-2.5 bg-gray-50 border-b border-gray-100">
-                    <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                      Evidencia {i + 1}
-                    </span>
-                    <button
-                      onClick={() => eliminarEvidencia(i)}
-                      className="text-gray-300 hover:text-red-400 text-xs transition-colors"
-                    >
-                      ✕ Quitar
-                    </button>
-                  </div>
-
-                  <div className="p-4 space-y-3">
-                    {/* Pregunta */}
-                    <div>
-                      <p className="text-xs font-medium text-gray-400 mb-1">Pregunta</p>
-                      <p className="text-sm text-gray-700 leading-relaxed">{ev.pregunta}</p>
-                    </div>
-
-                    {/* Respuesta */}
-                    <div>
-                      <p className="text-xs font-medium text-gray-400 mb-1">Respuesta del candidato</p>
-                      <p className="text-sm text-gray-800 leading-relaxed bg-gray-50 rounded-lg px-3 py-2">
-                        {ev.respuesta || <span className="text-gray-400 italic">Sin respuesta registrada</span>}
-                      </p>
-                    </div>
-
-                    {/* Lemas / rastros marcados */}
-                    {(rastrosAuto.length > 0 || rastrosManuales.length > 0 || rastrosAlerta.length > 0) && (
-                      <div>
-                        <p className="text-xs font-medium text-gray-400 mb-2">Lemas y alertas marcados</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {rastrosAuto.map((r, j) => (
-                            <span
-                              key={`auto-${j}`}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
-                              style={{
-                                backgroundColor: r.perfil === 'Dominante' ? '#FEE2E2'
-                                  : r.perfil === 'Sumiso' ? '#D1FAE5' : '#DBEAFE',
-                                color: r.perfil === 'Dominante' ? '#991B1B'
-                                  : r.perfil === 'Sumiso' ? '#065F46' : '#1E40AF',
-                              }}
-                            >
-                              {r.palabra}
-                              <span className="opacity-60">{r.perfil?.charAt(0)}</span>
-                              <span className="opacity-50 text-[10px]">{r.puntos > 0 ? `+${r.puntos}` : r.puntos}</span>
-                            </span>
-                          ))}
-                          {rastrosManuales.map((r, j) => (
-                            <span
-                              key={`man-${j}`}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
-                              style={{ backgroundColor: '#FEF9C3', color: '#713F12' }}
-                            >
-                              ✏ {r.palabra}
-                            </span>
-                          ))}
-                          {rastrosAlerta.map((r, j) => (
-                            <span
-                              key={`alt-${j}`}
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
-                              style={{ backgroundColor: '#EDE9FE', color: '#5B21B6' }}
-                            >
-                              ⚠ {r.lema || r.palabra}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Nota clínica */}
-                    {ev.nota ? (
-                      <div className="border-t border-gray-100 pt-3">
-                        <p className="text-xs font-medium text-gray-400 mb-1">Nota clínica</p>
-                        <p className="text-sm text-gray-700 italic">{ev.nota}</p>
-                      </div>
-                    ) : null}
-                  </div>
+            {evidencias.map((ev, i) => (
+              <div key={ev.idRespuesta} className="border border-gray-100 rounded-xl overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5" style={{ backgroundColor: '#F0F7F9' }}>
+                  <span className="text-xs font-semibold uppercase tracking-wide" style={{ color: PALETA.navy }}>Evidencia {i + 1}</span>
+                  <button onClick={() => setEvidencias((p) => p.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500 text-xs">✕ Quitar</button>
                 </div>
-              )
-            })}
+                <div className="p-4 space-y-3">
+                  <div>
+                    <p className="text-xs font-medium text-gray-400 mb-1">Pregunta</p>
+                    <p className="text-sm text-gray-700">{ev.pregunta}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-gray-400 mb-1">Respuesta del candidato</p>
+                    <p className="text-sm text-gray-800 bg-gray-50 rounded-lg px-3 py-2 border-l-4" style={{ borderLeftColor: PALETA.acento }}>
+                      {ev.respuesta || <span className="text-gray-400 italic">Sin respuesta registrada</span>}
+                    </p>
+                  </div>
+                  {ev.rastros.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {ev.rastros.map((r, j) => {
+                        const est = r.origen === 'alerta' ? { bg: COLOR_ALERTA.bg, txt: COLOR_ALERTA.text }
+                          : r.origen === 'manual' ? { bg: COLOR_MANUAL.bg, txt: COLOR_MANUAL.text }
+                          : { bg: COLOR_PERFIL_BG[r.perfil], txt: COLOR_PERFIL_TEXT[r.perfil] }
+                        return (
+                          <span key={j} className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium"
+                            style={{ backgroundColor: est.bg, color: est.txt }}>
+                            {r.origen === 'alerta' ? `▲ ${r.lema || r.palabra}` : r.palabra}
+                            {r.origen !== 'alerta' && <span className="opacity-60">{etiquetaPerfil(r.perfil)}</span>}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {ev.nota && (
+                    <div className="border-t border-gray-100 pt-3">
+                      <p className="text-xs font-medium text-gray-400 mb-1">Nota clínica</p>
+                      <p className="text-sm text-gray-700 italic">{ev.nota}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
-        <p className="text-xs text-gray-400 mt-3">
-          Las evidencias seleccionadas se incluyen en el informe PDF exportado.
-        </p>
-      </div>
+        <p className="text-xs text-gray-400 mt-3">Las evidencias seleccionadas se incluyen en el informe PDF.</p>
+      </Seccion>
 
       {/* Botones */}
       <div className="flex gap-3 justify-between">
-        <button
-          onClick={exportarPDF}
-          disabled={generandoPDF || !texto.trim()}
-          className="px-5 py-2.5 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors"
-        >
+        <button onClick={exportarPDF} disabled={generandoPDF || !texto.trim()}
+          className="px-5 py-2.5 border text-sm rounded-lg font-medium hover:bg-gray-50 disabled:opacity-40 transition-colors"
+          style={{ borderColor: PALETA.borde, color: PALETA.navy }}>
           {generandoPDF ? 'Generando PDF...' : '⬇ Exportar PDF'}
         </button>
-        <button
-          onClick={guardar}
-          disabled={guardando}
-          className="px-6 py-2.5 bg-gray-800 text-white text-sm rounded-lg hover:bg-gray-700 disabled:bg-gray-300 transition-colors"
-        >
+        <button onClick={guardar} disabled={guardando}
+          className="px-6 py-2.5 text-sm rounded-lg font-semibold disabled:opacity-50 transition-colors"
+          style={{ backgroundColor: PALETA.acento, color: PALETA.navy }}>
           {guardando ? 'Guardando...' : 'Guardar diagnóstico'}
         </button>
       </div>

@@ -3,7 +3,7 @@ Módulo de Procesamiento de Lenguaje Natural Determinista
 Pipeline: tokenización → lematización → POS tagging → dependencias → auditoría
 """
 import spacy
-from app.domain.nlp.lexico_nlp import LEXICO_VERBAL, FACTOR_NEGACION, MIN_PALABRAS, LEMAS_AMBIGUOS
+from app.domain.nlp.lexico_nlp import FACTOR_NEGACION, MIN_PALABRAS
 
 nlp = spacy.load("es_core_news_md")
 
@@ -62,9 +62,14 @@ def tiene_negacion_contextual(token, doc) -> bool:
     return False
 
 
-def analizar_texto(texto: str) -> dict:
+def analizar_texto(texto: str, lexico: dict, lemas_ambiguos: set) -> dict:
     """
     Procesa el texto libre del candidato con spaCy.
+
+    El lexicón llega como parámetro (lo carga la capa de aplicación desde la BD),
+    así el dominio no accede a la base de datos y sigue siendo determinista:
+      - lexico:         {"lema": {"perfil": str, "peso": float, "categoria": str}}
+      - lemas_ambiguos: {"lema", ...}
     Retorna un dict con:
       - es_valida: bool (pasa el mínimo de palabras RN-01)
       - es_evasiva: bool (sin rastro conductual RN-04)
@@ -89,13 +94,13 @@ def analizar_texto(texto: str) -> dict:
 
     for token in doc:
         lema = token.lemma_.lower()
-        entrada = LEXICO_VERBAL.get(lema)
+        entrada = lexico.get(lema)
 
         if not entrada:
             continue
 
         # Filtro de lemas ambiguos: solo puntúan cuando el candidato es el agente
-        if lema in LEMAS_AMBIGUOS and token.dep_ not in ("nsubj", "attr", "ROOT"):
+        if lema in lemas_ambiguos and token.dep_ not in ("nsubj", "attr", "ROOT"):
             continue
 
         negacion = tiene_negacion_contextual(token, doc)
