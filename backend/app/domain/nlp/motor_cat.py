@@ -11,10 +11,15 @@ from app.infraestructure.db.models.transicion_grafo import TransicionGrafo
 
 def construir_grafo(db: Session) -> nx.DiGraph:
     """
-    Carga todos los nodos y transiciones activas desde PostgreSQL
+    Carga los nodos activos y sus transiciones desde PostgreSQL
     y construye un grafo dirigido en memoria con NetworkX.
-    Se llama una vez al iniciar la app y cuando el psicólogo
-    modifica el banco de preguntas.
+    Se reconstruye en cada consulta al motor, por lo que los cambios
+    del psicólogo en el banco de preguntas toman efecto inmediato.
+
+    Solo se cargan las transiciones cuyos DOS extremos estén activos.
+    nx.add_edge crea en silencio los nodos que no existen, así que una
+    transición hacia un nodo desactivado lo reinsertaría sin atributos
+    (sin 'texto' ni pesos) y el motor fallaría al servir esa pregunta.
     """
     G = nx.DiGraph()
 
@@ -29,7 +34,18 @@ def construir_grafo(db: Session) -> nx.DiGraph:
             peso_sumiso=nodo.peso_sumiso,
         )
 
-    transiciones = db.query(TransicionGrafo).all()
+    if not nodos:
+        return G
+
+    ids_activos = [nodo.id_nodo for nodo in nodos]
+    transiciones = (
+        db.query(TransicionGrafo)
+        .filter(
+            TransicionGrafo.id_nodo_origen.in_(ids_activos),
+            TransicionGrafo.id_nodo_destino.in_(ids_activos),
+        )
+        .all()
+    )
     for t in transiciones:
         G.add_edge(
             t.id_nodo_origen,

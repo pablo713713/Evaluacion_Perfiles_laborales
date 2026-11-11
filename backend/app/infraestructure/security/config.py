@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     MIN_NODOS_REQUERIDOS: int = 15
     MIN_PALABRAS_RESPUESTA: int = 10
     ENV: str = "development"
+    K_VECINOS_GRAFO: int = 10
 
     # Configuración moderna de Pydantic V2
     model_config = SettingsConfigDict(
