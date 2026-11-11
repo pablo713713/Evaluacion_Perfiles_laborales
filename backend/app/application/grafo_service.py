@@ -1,30 +1,35 @@
+"""
+Servicio de Grafo — Capa de Aplicación
+Responsabilidad: mantener transicion_grafo sincronizada con la regla de
+conexión del dominio, para que el Psicólogo Líder no tenga que conectar
+preguntas a mano en la base de datos.
+
+La sincronización es diferencial e idempotente: compara el grafo que debería
+existir contra el que existe, inserta lo que falta y borra lo que sobra. Como
+la regla del dominio reproduce el grafo construido a mano, la primera
+ejecución sobre el banco actual no toca ninguna de las 4.225 filas.
+"""
 from sqlalchemy.orm import Session
 
-from app.infraestructure.security.config import settings
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 from app.infraestructure.db.models.transicion_grafo import TransicionGrafo
 
 # Capa de dominio — lógica pura
-from app.domain.grafo.conexion import vecinos_mas_disimiles
+from app.domain.grafo.conexion import aristas_del_grafo
 
-# Marca de las aristas generadas automáticamente. Las aristas con cualquier
-# otro valor se consideran puestas a mano y quedan intactas.
-CONDICION_DERIVADA = "derivada"
-
-
-def _pesos(nodo: NodoPregunta) -> tuple[float, float, float]:
-    return (nodo.peso_dominante, nodo.peso_hibrido, nodo.peso_sumiso)
+# El motor no lee este campo. Se deja en 0.0 como en el grafo existente.
+PESO_MINIMO_POR_DEFECTO = 0.0
 
 
-def _nodos_conectables(db: Session) -> list[NodoPregunta]:
+def _nodos_del_recorrido(db: Session) -> list[tuple[int, tuple[float, float, float], bool]]:
     """
-    Nodos que participan del grafo derivado.
+    Nodos que participan del grafo, en la forma que espera el dominio.
 
-    Se excluye la pregunta de cierre: procesar_respuesta la inyecta aparte,
+    Se excluye la pregunta de cierre: procesar_respuesta la inyecta aparte
     consultando es_cierre directamente, así que no debe ofrecerse además
     como candidata normal del recorrido.
     """
-    return (
+    filas = (
         db.query(NodoPregunta)
         .filter(
             NodoPregunta.estado_activo == True,  # noqa: E712
@@ -33,79 +38,70 @@ def _nodos_conectables(db: Session) -> list[NodoPregunta]:
         .order_by(NodoPregunta.id_nodo)
         .all()
     )
+    return [
+        (n.id_nodo, (n.peso_dominante, n.peso_hibrido, n.peso_sumiso), bool(n.es_raiz))
+        for n in filas
+    ]
 
 
-def calcular_aristas(db: Session, k: int | None = None) -> dict[tuple[int, int], float]:
+def sincronizar_grafo(db: Session) -> dict:
     """
-    Calcula el grafo derivado completo sin tocar la base de datos.
+    Deja transicion_grafo igual al grafo que define la regla del dominio.
 
-    Retorna {(id_origen, id_destino): similitud}. Cada par se agrega en
-    ambos sentidos: con solo aristas salientes, los nodos del centro del
-    simplex no son los "más disímiles" de nadie y quedarían con grado de
-    entrada 0, o sea inalcanzables para el motor.
+    No hace commit: lo hace quien llama, para que el alta de la pregunta y
+    sus aristas queden en la misma transacción.
+
+    Devuelve el detalle de lo que cambió. Si todo estaba en orden, los
+    contadores de insertadas y borradas vienen en 0.
     """
-    k = k if k is not None else settings.K_VECINOS_GRAFO
-    nodos = _nodos_conectables(db)
+    objetivo = aristas_del_grafo(_nodos_del_recorrido(db))
 
-    aristas: dict[tuple[int, int], float] = {}
-    for nodo in nodos:
-        candidatos = [
-            (otro.id_nodo, _pesos(otro))
-            for otro in nodos
-            if otro.id_nodo != nodo.id_nodo
-        ]
-        for id_vecino, sim in vecinos_mas_disimiles(_pesos(nodo), candidatos, k):
-            aristas[(nodo.id_nodo, id_vecino)] = sim
-            aristas[(id_vecino, nodo.id_nodo)] = sim
-    return aristas
-
-
-def recalcular_grafo(db: Session, k: int | None = None) -> dict:
-    """
-    Regenera todas las aristas derivadas a partir de los pesos actuales.
-
-    Es O(n^2) en cantidad de nodos: con 66 preguntas son ~4.300 comparaciones
-    de tres floats, despreciable. Se llama en cada alta, edición o baja de
-    pregunta porque cambiar los pesos de UN nodo puede cambiar el top-k de
-    los demás, y recalcular todo es la única forma de quedar siempre
-    consistente sin razonar sobre casos parciales.
-
-    No hace commit: lo hace quien lo llama, para que el alta de la pregunta
-    y su conexión queden en la misma transacción.
-    """
-    aristas = calcular_aristas(db, k)
-
-    db.query(TransicionGrafo).filter(
-        TransicionGrafo.perfil_condicion == CONDICION_DERIVADA
-    ).delete(synchronize_session=False)
-
-    # Un par que ya existe cargado a mano no se duplica: esa arista ya
-    # habilita el mismo recorrido y se respeta como la puso el especialista.
-    manuales = {
-        (t.id_nodo_origen, t.id_nodo_destino)
+    existentes = {
+        (t.id_nodo_origen, t.id_nodo_destino): (t.id_transicion, t.perfil_condicion)
         for t in db.query(
-            TransicionGrafo.id_nodo_origen, TransicionGrafo.id_nodo_destino
+            TransicionGrafo.id_transicion,
+            TransicionGrafo.id_nodo_origen,
+            TransicionGrafo.id_nodo_destino,
+            TransicionGrafo.perfil_condicion,
         ).all()
     }
 
-    nuevas = [
-        TransicionGrafo(
-            id_nodo_origen=origen,
-            id_nodo_destino=destino,
-            perfil_condicion=CONDICION_DERIVADA,
-            # El campo no lo lee el motor; se guarda acá la similitud del par
-            # para poder auditar por qué existe cada arista derivada.
-            peso_minimo_requerido=round(sim, 4),
-        )
-        for (origen, destino), sim in sorted(aristas.items())
-        if (origen, destino) not in manuales
+    faltantes = [par for par in objetivo if par not in existentes]
+    sobrantes = [datos[0] for par, datos in existentes.items() if par not in objetivo]
+    # Aristas que existen pero con otra condición: pasa cuando el psicólogo
+    # le cambia los pesos a una pregunta y su perfil de mayor peso cambia.
+    desactualizadas = [
+        (datos[0], objetivo[par])
+        for par, datos in existentes.items()
+        if par in objetivo and datos[1] != objetivo[par]
     ]
-    db.bulk_save_objects(nuevas)
-    db.flush()
 
+    if sobrantes:
+        db.query(TransicionGrafo).filter(
+            TransicionGrafo.id_transicion.in_(sobrantes)
+        ).delete(synchronize_session=False)
+
+    for id_transicion, condicion in desactualizadas:
+        db.query(TransicionGrafo).filter(
+            TransicionGrafo.id_transicion == id_transicion
+        ).update({"perfil_condicion": condicion}, synchronize_session=False)
+
+    if faltantes:
+        db.bulk_save_objects([
+            TransicionGrafo(
+                id_nodo_origen=origen,
+                id_nodo_destino=destino,
+                perfil_condicion=objetivo[(origen, destino)],
+                peso_minimo_requerido=PESO_MINIMO_POR_DEFECTO,
+            )
+            for origen, destino in sorted(faltantes)
+        ])
+
+    db.flush()
     return {
-        "k": k if k is not None else settings.K_VECINOS_GRAFO,
-        "nodos": len({o for o, _ in aristas}),
-        "aristas_derivadas": len(nuevas),
-        "aristas_manuales_preservadas": len(manuales),
+        "nodos_en_recorrido": len(_nodos_del_recorrido(db)),
+        "aristas_esperadas": len(objetivo),
+        "insertadas": len(faltantes),
+        "borradas": len(sobrantes),
+        "condicion_corregida": len(desactualizadas),
     }

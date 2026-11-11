@@ -5,7 +5,7 @@ from app.infraestructure.db.database import get_db
 from app.infraestructure.security.dependencies import require_psicologo, require_lider, require_psicologo_o_lider
 from app.infraestructure.db.models.nodo_pregunta import NodoPregunta
 from app.infraestructure.db.models.transicion_grafo import TransicionGrafo
-from app.application.grafo_service import recalcular_grafo
+from app.application.grafo_service import sincronizar_grafo
 
 
 router = APIRouter(prefix="/api/preguntas", tags=["Banco de Preguntas"])
@@ -75,7 +75,7 @@ def crear(body: NodoBody, db: Session = Depends(get_db), _=Depends(require_lider
     nodo = NodoPregunta(**body.dict())
     db.add(nodo)
     db.flush()                 # asigna id_nodo sin cerrar la transacción
-    recalcular_grafo(db)       # el nodo nuevo puede entrar al top-k de otros
+    sincronizar_grafo(db)      # la conecta con todo el banco segun la regla
     db.commit()
     db.refresh(nodo)
     return nodo
@@ -86,9 +86,9 @@ def editar(id_nodo: int, body: NodoBody, db: Session = Depends(get_db), _=Depend
     """
     Edita la pregunta y rearma el grafo.
 
-    El recálculo es necesario incluso si solo cambió el texto: es barato y
-    evita tener que razonar sobre qué cambió. Si cambiaron los pesos, el
-    nodo se mueve en el simplex y eso altera su top-k y el de los demás.
+    La sincronización es necesaria porque cambiar los pesos puede cambiar el
+    perfil de mayor peso del nodo, y con él la condición de todas las aristas
+    que entran a él. Es diferencial, así que si no cambió nada no escribe.
     """
     _validar_pesos(body)
     _validar_unicidad(db, body, id_actual=id_nodo)
@@ -99,7 +99,7 @@ def editar(id_nodo: int, body: NodoBody, db: Session = Depends(get_db), _=Depend
     for k, v in body.dict().items():
         setattr(nodo, k, v)
     db.flush()
-    recalcular_grafo(db)
+    sincronizar_grafo(db)
     db.commit()
     db.refresh(nodo)
     return nodo
@@ -112,7 +112,7 @@ def eliminar(id_nodo: int, db: Session = Depends(get_db), _=Depends(require_lide
 
     construir_grafo ya ignora las transiciones de nodos inactivos, pero sin
     borrarlas quedarían filas muertas que reaparecerían si la pregunta se
-    reactivara con otros pesos.
+    reactivara con otros pesos. La sincronización posterior las quita igual.
     """
     nodo = db.query(NodoPregunta).filter(NodoPregunta.id_nodo == id_nodo).first()
     if not nodo:
@@ -124,26 +124,21 @@ def eliminar(id_nodo: int, db: Session = Depends(get_db), _=Depends(require_lide
         | (TransicionGrafo.id_nodo_destino == id_nodo)
     ).delete(synchronize_session=False)
     db.flush()
-    recalcular_grafo(db)
+    sincronizar_grafo(db)
     db.commit()
     return {"ok": True}
 
 
-@router.post("/recalcular-grafo")
-def recalcular(
-    k: int | None = None,
-    db: Session = Depends(get_db),
-    _=Depends(require_lider),
-):
+@router.post("/sincronizar-grafo")
+def sincronizar(db: Session = Depends(get_db), _=Depends(require_lider)):
     """
-    Regenera el grafo derivado a mano.
+    Deja el grafo igual a lo que dicta la regla de conexión.
 
-    Se necesita una vez después de la migración inicial, y cada vez que se
-    quiera probar otro k sin cambiar la configuración del servidor.
-    Las transiciones cargadas a mano se conservan.
+    Es idempotente y diferencial: sobre un grafo ya correcto devuelve todos
+    los contadores en 0 sin tocar una fila. Sirve para verificar el estado
+    del grafo y para arreglarlo si alguien insertó preguntas con SQL directo,
+    salteándose la API.
     """
-    if k is not None and k < 1:
-        raise HTTPException(status_code=422, detail="k debe ser >= 1")
-    resumen = recalcular_grafo(db, k)
+    resumen = sincronizar_grafo(db)
     db.commit()
     return resumen
