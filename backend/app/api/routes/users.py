@@ -4,16 +4,16 @@ Módulo de Administración con RBAC (OE3)
 """
 import random
 import string
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-import os
-from dotenv import load_dotenv
-load_dotenv(override=True)
+
 from app.infraestructure.db.database import get_db
+from app.infraestructure.security.config import settings
 from app.infraestructure.security.dependencies import require_admin
 from app.infraestructure.security.security import hash_password
 from app.infraestructure.db.models.usuario import Usuario
+from app.application.email_service import enviar_credenciales, diagnostico
 
 router = APIRouter(prefix="/api/usuarios", tags=["Usuarios"])
 
@@ -24,7 +24,7 @@ class UsuarioBody(BaseModel):
     nombres: str          # Primer nombre (y segundo si aplica)
     apellido_paterno: str
     apellido_materno: str
-    correo: str
+    correo: EmailStr
     id_rol: int
     estado_cuenta: str = "activo"
 
@@ -43,59 +43,24 @@ def generar_password(nombres: str, apellido_paterno: str) -> str:
     return f"{primera_letra}{apellido}{digitos}"
 
 
-def enviar_credenciales_email(
-    correo: str,
-    nombre: str,
-    password: str,
-    smtp_host: str,
-    smtp_port: int,
-    smtp_user: str,
-    smtp_password: str,
-    remitente: str
-):
-    import smtplib
-    from email.mime.text import MIMEText
-    from email.mime.multipart import MIMEMultipart
+def _respuesta_credenciales(mensaje_base: str, password: str, resultado) -> dict:
+    """
+    Arma la respuesta informando el resultado real del envío.
 
-    if not smtp_user or not smtp_password:
-        print(f"[EMAIL SIMULADO] Para: {correo} | Contraseña: {password}")
-        return
+    La contraseña en claro solo viaja cuando el correo NO salió, o fuera de
+    producción. Si el envío falló, el administrador la necesita para
+    entregarla por otro medio; si salió, no hay razón para exponerla.
+    """
+    cuerpo = {
+        "ok": True,
+        "mensaje": mensaje_base,
+        "email_enviado": resultado.enviado,
+        "email_detalle": resultado.detalle,
+    }
+    if not resultado.enviado or not settings.es_produccion:
+        cuerpo["password_temporal"] = password
+    return cuerpo
 
-    try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = "Tus credenciales de acceso — Sistema de Evaluación"
-        msg["From"]    = remitente
-        msg["To"]      = correo
-
-        cuerpo_html = f"""
-        <html><body style="font-family: Arial, sans-serif; color: #333; max-width: 500px; margin: auto;">
-          <h2 style="color: #1a1a1a;">Bienvenido/a al Sistema de Evaluación de Perfiles Laborales</h2>
-          <p>Hola <strong>{nombre}</strong>,</p>
-          <p>Tu cuenta ha sido creada. Tus credenciales de acceso son:</p>
-          <div style="background: #f4f4f4; border-radius: 8px; padding: 16px; margin: 20px 0;">
-            <p style="margin: 4px 0;"><strong>Correo:</strong> {correo}</p>
-            <p style="margin: 4px 0;"><strong>Contraseña temporal:</strong>
-              <span style="font-family: monospace; font-size: 16px; color: #2563eb;">{password}</span>
-            </p>
-          </div>
-          <p style="color: #999; font-size: 12px; margin-top: 30px;">
-            Este mensaje fue generado automáticamente por el sistema.
-          </p>
-        </body></html>
-        """
-        msg.attach(MIMEText(cuerpo_html, "html"))
-
-        with smtplib.SMTP(smtp_host, smtp_port) as server:
-            server.ehlo()
-            server.starttls()
-            server.ehlo()
-            server.login(smtp_user, smtp_password)
-            server.sendmail(remitente, correo, msg.as_string())
-
-        print(f"[EMAIL ENVIADO] Credenciales enviadas a {correo}")
-
-    except Exception as e:
-        print(f"[EMAIL ERROR] No se pudo enviar a {correo}: {e}")
 
 # ─── Endpoints ──────────────────────────────────────────────────────────────
 
@@ -103,6 +68,18 @@ def enviar_credenciales_email(
 def listar_roles(db: Session = Depends(get_db), _=Depends(require_admin)):
     from app.infraestructure.db.models.rol import Rol
     return db.query(Rol).all()
+
+
+@router.get("/diagnostico-correo")
+def diagnostico_correo(_=Depends(require_admin)):
+    """
+    Muestra qué configuración de correo tiene cargada el servidor.
+
+    Sirve para verificar, desde el servidor desplegado, si las variables de
+    entorno llegaron bien, sin tener que crear un usuario de prueba. Nunca
+    devuelve la contraseña, solo si está configurada o no.
+    """
+    return diagnostico()
 
 
 @router.get("/")
@@ -123,12 +100,13 @@ def listar(db: Session = Depends(get_db), _=Depends(require_admin)):
 @router.post("/")
 def crear(
     body: UsuarioBody,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _=Depends(require_admin)
 ):
+    correo = body.correo.strip()
+
     # Verificar correo duplicado
-    existente = db.query(Usuario).filter(Usuario.correo == body.correo.strip()).first()
+    existente = db.query(Usuario).filter(Usuario.correo == correo).first()
     if existente:
         raise HTTPException(status_code=400, detail="El correo ya está registrado en el sistema.")
 
@@ -141,7 +119,7 @@ def crear(
     # Crear usuario
     usuario = Usuario(
         nombre_completo=nombre_completo,
-        correo=body.correo.strip(),
+        correo=correo,
         password_hash=hash_password(password_generada),
         id_rol=body.id_rol,
         estado_cuenta=body.estado_cuenta,
@@ -150,34 +128,17 @@ def crear(
     db.commit()
     db.refresh(usuario)
 
-    # Enviar credenciales por correo en segundo plano
-        # Leer variables SMTP en el hilo principal donde sí están disponibles
-    smtp_host     = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port     = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user     = os.getenv("SMTP_USER", "")
-    smtp_password = os.getenv("SMTP_PASSWORD", "")
-    remitente     = os.getenv("SMTP_FROM", smtp_user)
+    # El envío es sincrónico para poder informar si salió o no. El usuario
+    # ya quedó creado: si el correo falla, el alta sigue siendo válida y el
+    # administrador entrega la contraseña por otro medio.
+    resultado = enviar_credenciales(correo, body.nombres.strip(), password_generada)
 
-    background_tasks.add_task(
-        enviar_credenciales_email,
-        correo=body.correo.strip(),
-        nombre=body.nombres.strip(),
-        password=password_generada,
-        smtp_host=smtp_host,
-        smtp_port=smtp_port,
-        smtp_user=smtp_user,
-        smtp_password=smtp_password,
-        remitente=remitente,
+    respuesta = _respuesta_credenciales(
+        f"Usuario creado. {resultado.detalle}", password_generada, resultado
     )
-
-    return {
-        "ok": True,
-        "id_usuario": usuario.id_usuario,
-        "nombre_completo": nombre_completo,
-        "mensaje": f"Usuario creado. Credenciales enviadas a {body.correo.strip()}.",
-        # Solo para desarrollo — remover en producción
-        "_dev_password": password_generada,
-    }
+    respuesta["id_usuario"] = usuario.id_usuario
+    respuesta["nombre_completo"] = nombre_completo
+    return respuesta
 
 
 @router.delete("/{id_usuario}")
@@ -193,7 +154,6 @@ def eliminar(id_usuario: int, db: Session = Depends(get_db), _=Depends(require_a
 @router.post("/{id_usuario}/reenviar-credenciales")
 def reenviar_credenciales(
     id_usuario: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _=Depends(require_admin)
 ):
@@ -202,35 +162,16 @@ def reenviar_credenciales(
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
     # Generar nueva contraseña
-    nombres = usuario.nombre_completo.split()[0]
-    apellido = usuario.nombre_completo.split()[1] if len(usuario.nombre_completo.split()) > 1 else "user"
+    partes = usuario.nombre_completo.split()
+    nombres = partes[0] if partes else "usuario"
+    apellido = partes[1] if len(partes) > 1 else "user"
     nueva_password = generar_password(nombres, apellido)
 
     # Actualizar hash en BD
     usuario.password_hash = hash_password(nueva_password)
     db.commit()
 
-       # Leer variables SMTP en el hilo principal donde sí están disponibles
-    smtp_host     = os.getenv("SMTP_HOST", "smtp.gmail.com")
-    smtp_port     = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user     = os.getenv("SMTP_USER", "")
-    smtp_password = os.getenv("SMTP_PASSWORD", "")
-    remitente     = os.getenv("SMTP_FROM", smtp_user)
-
-    background_tasks.add_task(
-        enviar_credenciales_email,
-        correo=usuario.correo,
-        nombre=nombres,
-        password=nueva_password,
-        smtp_host=smtp_host,
-        smtp_port=smtp_port,
-        smtp_user=smtp_user,
-        smtp_password=smtp_password,
-        remitente=remitente,
+    resultado = enviar_credenciales(usuario.correo, nombres, nueva_password)
+    return _respuesta_credenciales(
+        f"Contraseña restablecida. {resultado.detalle}", nueva_password, resultado
     )
-
-    return {
-        "ok": True,
-        "mensaje": f"Nueva contraseña enviada a {usuario.correo}.",
-        "_dev_password": nueva_password,
-    }
