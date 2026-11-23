@@ -24,7 +24,7 @@ networkx==3.3
 python-dotenv==1.0.1
 
 # Validación
-pydantic==2.7.1
+pydantic[email]==2.7.1
 pydantic-settings==2.2.1
 
 # Generación de PDF (diagnóstico)
